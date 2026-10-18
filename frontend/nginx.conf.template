@@ -23,8 +23,14 @@ server {
         return 301 /api-docs/;
     }
 
+    # Ancienne URL (page d'essais séparée) : simple redirection.
+    location = /api-docs/swagger.html {
+        return 301 /api-docs/;
+    }
+
     location /api-docs/ {
-        try_files $uri $uri/ /api-docs/index.html;
+        # Un asset absent doit renvoyer 404, pas le HTML du répertoire.
+        try_files $uri $uri/index.html =404;
     }
 
     # Schéma OpenAPI, consommé par la page de documentation (même origine, donc

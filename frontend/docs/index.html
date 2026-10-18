@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>API AviaDB — documentation</title>
+    <title>API AviaDB — essais (Swagger UI)</title>
     <script>
       /* Le thème suit celui choisi dans l'application (même clé de stockage). */
       (function () {
@@ -16,6 +16,7 @@
         } catch (e) {}
       })()
     </script>
+    <link rel="stylesheet" href="swagger-ui.css" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -24,17 +25,21 @@
         <span class="logo">A</span>
         <span>
           API AviaDB
-          <span class="sub">— documentation générée depuis le schéma OpenAPI</span>
+          <span class="sub">— documentation et essais (Swagger UI)</span>
         </span>
       </span>
       <nav>
         <a class="link" href="/">← Retour à l’application</a>
-        <a class="link" href="/api-docs/swagger.html">Version Swagger UI</a>
         <a class="link" href="/openapi.json" download="aviadb-openapi.json">Télécharger le schéma</a>
       </nav>
     </header>
 
-    <main id="redoc"></main>
+    <p class="panel-note">
+      « Try it out » exécute réellement les requêtes depuis ce navigateur : la session
+      en cours est utilisée, inutile de saisir un jeton.
+    </p>
+
+    <main id="swagger" class="panel"></main>
 
     <section id="message" class="hidden">
       <h1 id="message-title">Documentation indisponible</h1>
@@ -42,48 +47,12 @@
       <a id="message-action" href="/">Ouvrir l’application</a>
     </section>
 
-    <script src="redoc.standalone.js"></script>
+    <script src="swagger-ui-bundle.js"></script>
     <script>
-      const dark = document.documentElement.classList.contains('dark')
-
-      const lightTheme = {
-        colors: { primary: { main: '#0284c7' } },
-        typography: { fontSize: '15px' },
-      }
-
-      const darkTheme = {
-        colors: {
-          primary: { main: '#38bdf8' },
-          success: { main: '#4ade80' },
-          warning: { main: '#fbbf24' },
-          error: { main: '#f87171' },
-          text: { primary: '#e2e8f0', secondary: '#94a3b8' },
-          border: { dark: '#1e293b', light: '#1e293b' },
-          background: { main: '#0b1120' },
-          http: { get: '#38bdf8', post: '#4ade80', put: '#fbbf24', delete: '#f87171' },
-          responses: {
-            success: { color: '#4ade80', backgroundColor: 'rgba(74,222,128,.12)' },
-            error: { color: '#f87171', backgroundColor: 'rgba(248,113,113,.12)' },
-            info: { color: '#38bdf8', backgroundColor: 'rgba(56,189,248,.12)' },
-            redirect: { color: '#fbbf24', backgroundColor: 'rgba(251,191,36,.12)' },
-          },
-        },
-        typography: {
-          fontSize: '15px',
-          code: { color: '#e2e8f0', backgroundColor: '#111c33' },
-          links: { color: '#38bdf8' },
-        },
-        sidebar: {
-          backgroundColor: '#0f172a',
-          textColor: '#cbd5e1',
-          activeTextColor: '#38bdf8',
-          arrow: { color: '#64748b' },
-        },
-        rightPanel: { backgroundColor: '#0f172a', textColor: '#cbd5e1' },
-      }
-
       function showMessage(title, text, actionLabel, actionHref) {
-        document.getElementById('redoc').classList.add('hidden')
+        const panel = document.getElementById('swagger')
+        panel.classList.add('hidden')
+        document.querySelector('.panel-note').classList.add('hidden')
         document.getElementById('message-title').textContent = title
         document.getElementById('message-text').textContent = text
         const action = document.getElementById('message-action')
@@ -108,18 +77,22 @@
           if (!response.ok) throw new Error('réponse HTTP ' + response.status)
 
           const spec = await response.json()
-          Redoc.init(
+          window.ui = SwaggerUIBundle({
             spec,
-            {
-              theme: dark ? darkTheme : lightTheme,
-              hideDownloadButton: false,
-              expandResponses: '200,201',
-              jsonSampleExpandLevel: 3,
-              pathInMiddlePanel: true,
-              scrollYOffset: 56,
-            },
-            document.getElementById('redoc'),
-          )
+            dom_id: '#swagger',
+            layout: 'BaseLayout',
+            presets: [SwaggerUIBundle.presets.apis],
+            deepLinking: true,
+            // Les requêtes « Try it out » emportent le cookie de session.
+            withCredentials: true,
+            tryItOutEnabled: true,
+            displayRequestDuration: true,
+            persistAuthorization: true,
+            filter: true,
+            docExpansion: 'list',
+            defaultModelsExpandDepth: 1,
+            syntaxHighlight: { activated: true, theme: 'agate' },
+          })
         } catch (error) {
           showMessage(
             'Documentation indisponible',
