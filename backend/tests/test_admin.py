@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from helpers import ADMIN_LOGIN, BASE_URL, SETTINGS_URL, restore, set_rates
+
 from app import auth, media
-from helpers import ADMIN_LOGIN, BASE_URL, RATES_URL, SETTINGS_URL, restore, set_rates
 
 VIEWER = {"username": "viewer", "password": "viewerpass", "role": "VIEWER"}
 
@@ -253,7 +254,7 @@ def test_import_csv_requires_name_column(admin_client):
 def test_backup_and_restore_replace(admin_client, create_item, upload_photo):
     item = create_item(name="Sauvegardé", estimated_value=99, tags=["archive"],
                        diecast={"scale": "1/72", "manufacturer": "Corgi"})
-    photo = upload_photo(item["id"], caption="vue")
+    upload_photo(item["id"], caption="vue")
 
     archive = admin_client.get("/api/admin/backup").content
     assert archive[:2] == b"PK"

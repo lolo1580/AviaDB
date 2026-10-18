@@ -30,12 +30,12 @@ os.environ["ADMIN_USERNAME"] = "admin"
 os.environ["ADMIN_MAX_FAILURES"] = "1000"
 
 from fastapi.testclient import TestClient  # noqa: E402
+from helpers import ADMIN_LOGIN  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from app import auth, currency, media  # noqa: E402
 from app.database import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
-from helpers import ADMIN_LOGIN  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

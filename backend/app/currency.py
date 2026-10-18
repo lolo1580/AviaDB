@@ -33,7 +33,7 @@ import logging
 import os
 import urllib.error
 import urllib.request
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -152,7 +152,7 @@ def set_rates(db: Session, rates: dict[str, float], source: str) -> None:
             cleaned[code] = number
     set_setting(db, "rates", cleaned)
     set_setting(db, "rates_source", source)
-    set_setting(db, "rates_updated_at", datetime.now(timezone.utc).isoformat())
+    set_setting(db, "rates_updated_at", datetime.now(UTC).isoformat())
 
 
 # --------------------------------------------------------------------------- #
@@ -178,7 +178,9 @@ def to_eur(value: float, currency: str | None, rates: dict[str, float]) -> float
 # Récupération des taux
 # --------------------------------------------------------------------------- #
 def _http_json(url: str) -> dict:
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    request = urllib.request.Request(
+        url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"}
+    )
     try:
         with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
             return json.loads(response.read().decode())
@@ -244,7 +246,9 @@ def fetch_historical_per_eur(currency: str, on_date: date) -> tuple[float | None
     return None, None
 
 
-def historical_per_eur(db: Session, currency: str | None, on_date: date | None) -> tuple[float, date | None]:
+def historical_per_eur(
+    db: Session, currency: str | None, on_date: date | None
+) -> tuple[float, date | None]:
     """Taux `per_eur` à utiliser pour un achat, avec cache et repli.
 
     Renvoie (taux, date du taux) ; la date est None quand on est retombé sur le

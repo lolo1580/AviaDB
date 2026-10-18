@@ -8,7 +8,7 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   startIndex: { type: Number, default: 0 },
 })
-const emit = defineEmits(['close'])
+defineEmits(['close'])
 
 const index = ref(props.startIndex)
 

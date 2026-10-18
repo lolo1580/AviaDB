@@ -37,6 +37,8 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - name: Installer les dépendances
         run: pip install -r requirements-dev.txt
+      - name: Linter (Ruff)
+        run: ruff check .
       - name: Lancer les tests
         run: pytest -q
 
@@ -53,5 +55,34 @@ jobs:
           node-version: "22"
       - name: Installer les dépendances
         run: npm install --no-audit --no-fund
+      - name: Linter (ESLint)
+        run: npm run lint
+      - name: Tests unitaires et couverture (Vitest)
+        run: npm run test:coverage
       - name: Construire
         run: npm run build
+
+  e2e:
+    name: Frontend (E2E Playwright)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Installer les dépendances
+        run: npm install --no-audit --no-fund
+      - name: Installer Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Tests de bout en bout
+        run: npm run e2e
+      - name: Rapport Playwright
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7

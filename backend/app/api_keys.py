@@ -16,7 +16,7 @@ import logging
 import os
 import secrets
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
@@ -88,7 +88,7 @@ def require_api_key(
         )
     _record_hit(record.id)
 
-    record.last_used_at = datetime.now(timezone.utc)
+    record.last_used_at = datetime.now(UTC)
     record.request_count += 1
     db.commit()
     return record

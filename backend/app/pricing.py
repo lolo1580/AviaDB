@@ -115,8 +115,8 @@ def _assert_public_url(url: str) -> None:
 
     try:
         addresses = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        raise PriceFetchError(f"Nom d'hôte introuvable : {host}")
+    except socket.gaierror as exc:
+        raise PriceFetchError(f"Nom d'hôte introuvable : {host}") from exc
 
     for info in addresses:
         try:

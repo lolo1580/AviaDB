@@ -21,7 +21,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import func, select
@@ -283,7 +283,12 @@ router = APIRouter(prefix="/api/admin", tags=["auth"])
 
 
 @router.post("/login", response_model=schemas.TokenOut)
-def login(payload: schemas.LoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
+def login(
+    payload: schemas.LoginIn,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     if not protection_enabled():
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -301,12 +306,16 @@ def login(payload: schemas.LoginIn, request: Request, response: Response, db: Se
         select(models.User).where(models.User.username == payload.username)
     ).first()
 
-    if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
+    if (
+        user is None
+        or not user.is_active
+        or not verify_password(payload.password, user.password_hash)
+    ):
         _record_failure(client)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Identifiants incorrects")
 
     _failures.pop(client, None)
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = datetime.now(UTC)
     db.commit()
 
     token, expires_at = create_token(user.username, user.role.value)
@@ -319,7 +328,9 @@ def login(payload: schemas.LoginIn, request: Request, response: Response, db: Se
         secure=cookie_secure(),
         path="/",
     )
-    return schemas.TokenOut(token=token, expires_at=expires_at, username=user.username, role=user.role.value)
+    return schemas.TokenOut(
+        token=token, expires_at=expires_at, username=user.username, role=user.role.value
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

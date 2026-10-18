@@ -45,8 +45,12 @@ export function tempId(prefix = 'temp') {
   return `${prefix}-${Date.now().toString(36)}-${sequence}`
 }
 
+// Forme produite par `tempId` : `<prefixe>-<horodatage base36>-<compteur>`.
+// Les identifiants du serveur sont des entiers, jamais des chaînes.
+const TEMP_ID_PATTERN = /^[^-]+-[0-9a-z]+-\d+$/
+
 export function isTempId(id) {
-  return typeof id === 'string' && id.startsWith('temp-')
+  return typeof id === 'string' && TEMP_ID_PATTERN.test(id)
 }
 
 // --------------------------------------------------------------------------- #

@@ -29,7 +29,7 @@ function onKeydown(event, index) {
   if (!keys.includes(event.key)) return
   event.preventDefault()
 
-  let next = index
+  let next
   if (event.key === 'ArrowRight') next = (index + 1) % props.tabs.length
   else if (event.key === 'ArrowLeft') next = (index - 1 + props.tabs.length) % props.tabs.length
   else if (event.key === 'Home') next = 0
@@ -47,11 +47,11 @@ function onKeydown(event, index) {
   >
     <button
       v-for="(tab, index) in tabs"
+      :id="`tab-${tab.id}`"
       :key="tab.id"
       ref="buttons"
       type="button"
       role="tab"
-      :id="`tab-${tab.id}`"
       :aria-selected="modelValue === tab.id"
       :aria-controls="`panel-${tab.id}`"
       :tabindex="modelValue === tab.id ? 0 : -1"

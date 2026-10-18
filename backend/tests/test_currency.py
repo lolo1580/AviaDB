@@ -8,9 +8,9 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from helpers import BASE_URL, RATES_URL, REFRESH_URL, SETTINGS_URL, set_rates
 
 from app import currency
-from helpers import ADMIN_LOGIN, BASE_URL, RATES_URL, REFRESH_URL, SETTINGS_URL, restore, set_rates
 
 
 def test_settings_expose_currencies_and_base(admin_client):

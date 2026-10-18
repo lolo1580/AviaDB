@@ -61,7 +61,7 @@ def save_image(upload: UploadFile, item_id: int) -> tuple[str, str]:
         img = Image.open(io.BytesIO(data))
         img.load()
     except UnidentifiedImageError:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Format d'image non reconnu")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Format d'image non reconnu") from None
 
     if img.format not in ALLOWED_FORMATS:
         raise HTTPException(
@@ -93,7 +93,7 @@ def save_image(upload: UploadFile, item_id: int) -> tuple[str, str]:
         delete_files(main_rel.as_posix(), thumb_rel.as_posix())
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Échec de l'enregistrement de l'image"
-        )
+        ) from None
 
     return main_rel.as_posix(), thumb_rel.as_posix()
 

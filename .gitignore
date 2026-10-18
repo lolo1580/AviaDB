@@ -12,9 +12,20 @@ dist/
 .vite/
 npm-debug.log*
 
+# Tests E2E (Playwright)
+playwright-report/
+test-results/
+e2e/.cache/
+
+# Couverture de code
+coverage/
+
 # Données persistées (base SQLite + images uploadées)
 data/*
 !data/.gitkeep
+
+# Sauvegardes ZIP planifiées
+backups/
 
 # Divers
 .env

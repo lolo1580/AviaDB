@@ -1,0 +1,26 @@
+# Configuration Ruff (linter Python) pour le backend.
+# Exécution : `ruff check .` puis `ruff format --check .` depuis backend/.
+target-version = "py312"
+line-length = 100
+extend-exclude = ["__pycache__"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# UP042 proposerait `enum.StrEnum` à la place de `(str, enum.Enum)`. Le
+# changement modifie `str(membre)` : on le garde volontairement pour ne pas
+# altérer la sérialisation des énumérations.
+ignore = ["UP042"]
+
+# FastAPI : `Depends(...)`, `Query(...)`, `File(...)` et `Form(...)` sont des
+# appels dans les valeurs par défaut, c'est le motif documenté du framework.
+[lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.File",
+    "fastapi.Form",
+]
+
+[lint.per-file-ignores]
+# Les tests utilisent volontairement des imports tardifs et des noms courts.
+"tests/*" = ["E501"]

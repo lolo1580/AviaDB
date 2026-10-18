@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { STATUS_LABEL, TYPE_LABEL } from '../labels'
-import { classes, flattenedClasses } from '../classes'
+import { flattenedClasses } from '../classes'
 
 const props = defineProps({
   filters: { type: Object, required: true },

@@ -7,7 +7,6 @@ import logging
 import os
 import zipfile
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete as sa_delete
 

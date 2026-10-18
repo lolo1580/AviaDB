@@ -16,7 +16,7 @@ import logging
 import os
 import tempfile
 import zipfile
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException, UploadFile, status
@@ -98,7 +98,7 @@ def build_backup_file(db: Session) -> Path:
     )
     document = {
         "version": 2,
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_at": datetime.now(UTC).isoformat(),
         "total": len(items),
         "items": [schemas.ItemOut.model_validate(item).model_dump(mode="json") for item in items],
         "settings": _dump_settings(db),
@@ -199,7 +199,7 @@ def restore_backup(db: Session, upload: UploadFile, replace: bool) -> dict:
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Archive ZIP illisible")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Archive ZIP illisible") from None
 
     # Garde-fous contre les archives pièges : nombre d'entrées et volume
     # décompressé annoncés, avant toute écriture sur disque.
@@ -225,7 +225,7 @@ def restore_backup(db: Session, upload: UploadFile, replace: bool) -> dict:
     try:
         document = json.loads(archive.read(MANIFEST_NAME))
     except json.JSONDecodeError:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Manifeste JSON invalide")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Manifeste JSON invalide") from None
 
     entries = document.get("items") if isinstance(document, dict) else document
     if not isinstance(entries, list):
@@ -313,8 +313,13 @@ def restore_backup(db: Session, upload: UploadFile, replace: bool) -> dict:
 
     db.commit()
     logger.info(
-        "Restauration : %s objet(s), %s photo(s), %s fichier(s) d'image, %s compte(s) (remplacement=%s)",
-        created, photos, restored_files, restored_users, replace,
+        "Restauration : %s objet(s), %s photo(s), %s fichier(s) d'image, "
+        "%s compte(s) (remplacement=%s)",
+        created,
+        photos,
+        restored_files,
+        restored_users,
+        replace,
     )
     return {
         "created": created,
