@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
               class="flex items-start justify-between gap-4 px-6 py-4"
               :class="bare ? 'border-b border-white/10' : 'border-b border-slate-200 dark:border-slate-800'"
             >
-              <slot name="header">
+              <slot name="header" :title-id="titleId" :description-id="descriptionId">
                 <div class="min-w-0">
                   <h2
                     :id="titleId"

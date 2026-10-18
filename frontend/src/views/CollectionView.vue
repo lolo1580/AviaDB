@@ -12,7 +12,7 @@ import ItemCard from '../components/ItemCard.vue'
 import ItemListRow from '../components/ItemListRow.vue'
 import ViewToggle from '../components/ViewToggle.vue'
 import ItemFormModal from '../components/ItemFormModal.vue'
-import ItemDetailModal from '../components/ItemDetailModal.vue'
+import ItemDetailDrawer from '../components/ItemDetailDrawer.vue'
 
 const stats = ref(null)
 const enums = ref(null)
@@ -79,14 +79,19 @@ function openCreate() {
   showForm.value = true
 }
 
-/** Clic sur une carte : édition si admin, sinon fiche en lecture seule. */
+/**
+ * Clic sur une carte : le panneau latéral s'ouvre pour tout le monde
+ * (consultation), l'édition restant accessible depuis son bouton « Modifier ».
+ */
 function openItem(item) {
-  if (canWrite()) {
-    editing.value = item
-    showForm.value = true
-  } else {
-    detail.value = item
-  }
+  detail.value = item
+}
+
+/** Depuis le panneau : on ferme la consultation et on ouvre le formulaire. */
+function editItem(item) {
+  detail.value = null
+  editing.value = item
+  showForm.value = true
 }
 
 // La modale se ferme tout de suite : la mutation locale part avant le serveur.
@@ -232,12 +237,12 @@ async function onRemove(item) {
       @remove="onRemove"
     />
 
-    <ItemDetailModal
+    <ItemDetailDrawer
       :open="detail !== null"
       :item="detail"
       :can-edit="canWrite()"
       @close="detail = null"
-      @edit="openItem"
+      @edit="editItem"
     />
   </div>
 </template>

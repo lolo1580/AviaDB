@@ -398,6 +398,12 @@ formulaires, fiches et confirmations.
   (désactivées si `prefers-reduced-motion`), tailles `sm → full`, emplacements
   `header` / `default` / `footer`, thème sombre, mode `bare` et fond `dark` pour
   la visionneuse photo.
+- **`AppDrawer.vue`** — même socle, mais en **panneau latéral** qui glisse depuis
+  le bord droit (pleine hauteur, corps défilant, pied fixe).
+- **`ItemDetailDrawer.vue`** — la fiche d'un objet, ouverte au clic sur une carte
+  ou une ligne : photos (cliquables, visionneuse plein écran), détails
+  techniques, historique et acquisition, notes, tags. Accessible à tous ;
+  le bouton « Modifier » n'apparaît que pour les administrateurs.
 - **`AppButton.vue`** — boutons de pied de modale (primary, secondary, danger,
   ghost) avec état de chargement.
 - **`ConfirmDialog.vue`** + **`useConfirm.js`** — confirmations asynchrones :

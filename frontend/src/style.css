@@ -108,3 +108,37 @@ html.dark {
     transform: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Transitions des panneaux latéraux (voir components/ui/AppDrawer.vue).
+   --------------------------------------------------------------------------- */
+.drawer-enter-active,
+.drawer-leave-active {
+  transition: opacity 0.2s ease;
+}
+.drawer-enter-from,
+.drawer-leave-to {
+  opacity: 0;
+}
+
+.drawer-enter-active .drawer-panel,
+.drawer-leave-active .drawer-panel {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.drawer-enter-from .drawer-panel,
+.drawer-leave-to .drawer-panel {
+  transform: translateX(100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer-enter-active,
+  .drawer-leave-active,
+  .drawer-enter-active .drawer-panel,
+  .drawer-leave-active .drawer-panel {
+    transition: none;
+  }
+  .drawer-enter-from .drawer-panel,
+  .drawer-leave-to .drawer-panel {
+    transform: none;
+  }
+}

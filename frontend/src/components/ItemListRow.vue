@@ -25,13 +25,14 @@ const specifics = computed(() => {
 
 <template>
   <article
-    class="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:shadow-md sm:gap-4 dark:border-slate-800 dark:bg-slate-900"
+    class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:shadow-md sm:gap-4 dark:border-slate-800 dark:bg-slate-900"
+    @click="$emit('edit', item)"
   >
     <button
       type="button"
       class="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800"
       :aria-label="item.name"
-      @click="$emit('edit', item)"
+      @click.stop="$emit('edit', item)"
     >
       <img v-if="cover" :src="photoUrl(cover.thumb_path || cover.file_path)" alt="" class="h-full w-full object-cover" />
       <span v-else class="grid h-full w-full place-items-center text-slate-300 dark:text-slate-600">
@@ -44,7 +45,7 @@ const specifics = computed(() => {
         <button
           type="button"
           class="truncate text-sm font-semibold text-slate-900 hover:text-sky-700 dark:text-slate-100 dark:hover:text-sky-400"
-          @click="$emit('edit', item)"
+          @click.stop="$emit('edit', item)"
         >
           {{ item.name }}
         </button>

@@ -9,7 +9,7 @@ import { formatMoney } from '../labels'
 import { settings, toBase } from '../settings'
 import ItemCard from '../components/ItemCard.vue'
 import ItemFormModal from '../components/ItemFormModal.vue'
-import ItemDetailModal from '../components/ItemDetailModal.vue'
+import ItemDetailDrawer from '../components/ItemDetailDrawer.vue'
 
 const enums = ref(null)
 const error = ref('')
@@ -41,12 +41,13 @@ const editing = ref(null)
 const detail = ref(null)
 
 function openItem(item) {
-  if (canWrite()) {
-    editing.value = item
-    showForm.value = true
-  } else {
-    detail.value = item
-  }
+  detail.value = item
+}
+
+function editItem(item) {
+  detail.value = null
+  editing.value = item
+  showForm.value = true
 }
 
 // La liste est filtrée sur le statut « Recherché » : toute création y arrive.
@@ -176,12 +177,12 @@ async function markAcquired(item) {
       @update="onUpdate"
       @remove="onRemove"
     />
-    <ItemDetailModal
+    <ItemDetailDrawer
       :open="detail !== null"
       :item="detail"
       :can-edit="canWrite()"
       @close="detail = null"
-      @edit="openItem"
+      @edit="editItem"
     />
   </div>
 </template>
