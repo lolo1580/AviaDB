@@ -19,7 +19,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from . import admin, auth, crud, currency, media, migrations, models, schemas
-from .database import Base, SessionLocal, engine, get_db, year_expression
+from .database import Base, SessionLocal, engine, get_db
 
 # Raccourci : toutes les routes d'écriture exigent un admin authentifié.
 # Les routes GET (consultation) restent publiques.
@@ -36,8 +36,8 @@ _ITEM_LOADS = (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Crée le fichier SQLite et les tables au démarrage si nécessaire, puis
-    # complète le schéma d'une base existante (colonnes ajoutées après coup).
+    # Crée les tables manquantes au démarrage, puis complète le schéma d'une
+    # base existante (colonnes ajoutées après coup).
     Base.metadata.create_all(bind=engine)
     migrations.ensure_schema()
 
@@ -681,8 +681,8 @@ def stats(db: Session = Depends(get_db)):
         ).all()
     )
 
-    # Années d'achat (to_char sur PostgreSQL, strftime sur SQLite)
-    year_column = year_expression(models.Item.purchase_date)
+    # Années d'achat (PostgreSQL : extraction de l'année)
+    year_column = func.to_char(models.Item.purchase_date, "YYYY")
     by_year = _buckets(
         db.execute(
             select(year_column, func.count())

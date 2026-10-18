@@ -1,8 +1,8 @@
 # AviaDB
 
 Gestion de collection aviation : maquettes diecast **et** patches, dans une seule
-base. Backend **FastAPI + SQLAlchemy (PostgreSQL, ou SQLite en local)**, frontend
-**Vue 3 + Vite + Tailwind**, le tout orchestré par **Docker Compose**.
+base. Backend **FastAPI + SQLAlchemy (PostgreSQL)**, frontend **Vue 3 + Vite +
+Tailwind**, le tout orchestré par **Docker Compose**.
 
 ## Sommaire
 
@@ -25,42 +25,26 @@ base. Backend **FastAPI + SQLAlchemy (PostgreSQL, ou SQLite en local)**, fronten
 
 ## Base de données
 
-Le schéma est décrit en SQLAlchemy : l'application tourne indifféremment sur
-**PostgreSQL** (déploiement Docker, par défaut) ou sur **SQLite** (développement
-local, sans service à lancer).
+L'application est adossée à **PostgreSQL** (18), via SQLAlchemy et le pilote
+`psycopg`. L'URL est fournie par `DATABASE_URL` :
 
 ```
-DATABASE_URL=postgresql+psycopg://aviadb:***@db:5432/aviadb   # docker compose
-DATABASE_URL=sqlite:///./data/aviadb.db                        # défaut en local
+DATABASE_URL=postgresql+psycopg://aviadb:motdepasse@db:5432/aviadb      # compose
+DATABASE_URL=postgresql+psycopg://aviadb:motdepasse@localhost:5434/aviadb
 ```
 
-- Le conteneur `db` publie **5434** côté hôte (5432 est occupé par le PostgreSQL
-  du système et 5433 par un autre projet) ; en interne, le backend joint la base
-  par `db:5432` (ou `127.0.0.1:5434` en réseau hôte).
-- Les données PostgreSQL vivent dans le volume nommé `aviadb-pgdata` ; le dossier
-  `data/` ne contient plus que les images.
-- Le pilote est `psycopg` (binaire embarqué, aucune compilation).
-- Les requêtes dépendant du dialecte passent par `database.year_expression()`
-  (`to_char` sur PostgreSQL, `strftime` sur SQLite).
+- Le service `db` (image `postgres:18-alpine`) publie **5434** côté hôte — 5432
+  est souvent déjà pris par un PostgreSQL système, 5433 par un autre projet. En
+  interne, le backend joint la base par `db:5432`.
+- Les données vivent dans le volume Docker `aviadb-pgdata` ; `./data` ne contient
+  plus que les images.
+- Le pilote `psycopg` est fourni en binaire : aucune compilation, aucune
+  dépendance système à installer.
+- **Sauvegarde de la base** :
 
-### Revenir à SQLite
-
-```bash
-DATABASE_URL=sqlite:////app/data/aviadb.db docker compose up -d backend
-```
-
-### Migrer des données
-
-La **sauvegarde ZIP** (`Administration → Sauvegarder`) est le moyen portable de
-transférer la collection d'un moteur à l'autre : elle contient les objets, les
-photos, **les réglages** (devise de référence, taux) et **les comptes**.
-Sur l'instance cible : `Administration → Restaurer (ZIP)`.
-
-Pour une sauvegarde au niveau du moteur PostgreSQL :
-
-```bash
-docker exec aviadb-db pg_dump -U aviadb aviadb | gzip > aviadb-pg.sql.gz
-```
+  ```bash
+  docker exec aviadb-db pg_dump -U aviadb aviadb | gzip > aviadb-pg.sql.gz
+  ```
 
 ## Démarrage rapide
 
@@ -102,21 +86,19 @@ Les ports 80 et 8000 doivent être libres sur l'hôte.
 
 ## Développement local
 
-Sans Docker, l'application utilise **SQLite** par défaut (aucun service à lancer).
-
-**Backend** (depuis `backend/`) :
+PostgreSQL est le seul moteur : le plus simple est de lancer la base du compose,
+puis le backend et le frontend à la main.
 
 ```bash
+docker compose up -d db            # PostgreSQL sur le port 5434
+cd backend
 pip install -r requirements.txt
+export DATABASE_URL=postgresql+psycopg://aviadb:<motdepasse>@localhost:5434/aviadb
 uvicorn app.main:app --reload      # http://localhost:8000
 ```
 
-La base est créée automatiquement dans `./data/aviadb.db`, les images dans
-`./uploads/`. Pour travailler sur PostgreSQL :
-
-```bash
-export DATABASE_URL=postgresql+psycopg://aviadb:motdepasse@localhost:5434/aviadb
-```
+Les tables sont créées automatiquement au démarrage, les images vont dans
+`./uploads/` (variable `UPLOAD_DIR`).
 
 **Frontend** (depuis `frontend/`) :
 
@@ -133,7 +115,7 @@ Vite proxifie `/api` et `/uploads` vers `http://localhost:8000`.
 aviadb/
 ├── backend/
 │   ├── app/
-│   │   ├── database.py   # engine + session, dialecte SQLite ou PostgreSQL
+│   │   ├── database.py   # engine PostgreSQL, session, pool_pre_ping
 │   │   ├── models.py     # tables SQLAlchemy
 │   │   ├── schemas.py    # schémas Pydantic (entrées/sorties, gardes)
 │   │   ├── crud.py       # création d'items + résolution des tags (partagé)
@@ -169,7 +151,7 @@ aviadb/
 │   ├── nginx.conf.template  # SPA + proxy /api et /uploads (BACKEND_URL)
 │   ├── Dockerfile        # multi-stage : build Vite → Nginx
 │   └── package.json
-├── .github/workflows/ci.yml  # intégration continue (pytest SQLite + PostgreSQL, build)
+├── .github/workflows/ci.yml  # intégration continue (pytest PostgreSQL, build)
 ├── .env.example          # modèle de configuration
 ├── data/                 # images uploadées (la base est dans le volume Docker)
 ├── docker-compose.yml    # db + backend + frontend
@@ -446,7 +428,7 @@ l'interface entre thème clair et sombre.
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `DATABASE_URL` | `sqlite:///./data/aviadb.db` | URL SQLAlchemy (PostgreSQL ou SQLite) |
+| `DATABASE_URL` | `postgresql+psycopg://aviadb:change-me@localhost:5434/aviadb` | URL PostgreSQL |
 | `POSTGRES_PASSWORD` | `change-me` | mot de passe du conteneur `db` |
 | `UPLOAD_DIR` | `./uploads` | dossier des images |
 | `IMAGE_MAX_DIMENSION` | `1600` | taille max de l'image principale (px) |
@@ -477,12 +459,18 @@ monté sur `./data` de l'hôte.
 
 ## Tests
 
+La suite s'exécute sur **PostgreSQL** (c'est le seul moteur). Le plus simple est
+une base jetable dédiée :
+
 ```bash
+docker run -d --rm --name aviadb-test-db \
+  -e POSTGRES_PASSWORD=test -e POSTGRES_USER=aviadb -e POSTGRES_DB=aviadb_test \
+  -p 55432:5432 postgres:18-alpine
+
 cd backend
 pip install -r requirements-dev.txt
-pytest                    # sur SQLite (aucun service requis)
-
-# ou sur PostgreSQL :
+pytest                     # utilise par défaut la base ci-dessus
+# ou, pour viser une autre base :
 DATABASE_URL=postgresql+psycopg://aviadb:test@localhost:5432/aviadb_test pytest
 ```
 
@@ -494,9 +482,11 @@ CSV, la sauvegarde/restauration (objets, réglages et comptes) et le mode sans
 protection. **Aucun test ne fait d'appel réseau** : le fournisseur de taux est
 simulé et un garde-fou fait échouer toute tentative.
 
-L'intégration continue (`.github/workflows/ci.yml`) lance trois jobs à chaque push
-et pull request : `backend` (pytest sur SQLite), `backend-postgres` (la même suite
-sur PostgreSQL, ce qui détecte les requêtes propres à un moteur) et `frontend`
+Chaque test repart d'un schéma vide (`drop_all` / `create_all`), d'où une
+exécution d'une minute environ.
+
+L'intégration continue (`.github/workflows/ci.yml`) lance deux jobs à chaque push
+et pull request : `backend` (pytest, avec un service PostgreSQL) et `frontend`
 (build Vite).
 
 > Note : le conteneur backend tourne en `root`, les fichiers de `./data` sont donc

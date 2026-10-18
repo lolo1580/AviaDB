@@ -16,9 +16,12 @@ import pytest
 
 TMP_DIR = tempfile.mkdtemp(prefix="aviadb-tests-")
 
-# `setdefault` : la suite tourne sur SQLite par défaut, mais peut être pointée
-# vers PostgreSQL via DATABASE_URL (c'est ce que fait le job CI « postgres »).
-os.environ.setdefault("DATABASE_URL", f"sqlite:///{TMP_DIR}/test.db")
+# L'application est adossée à PostgreSQL : la suite s'exécute donc sur une vraie
+# base. Par défaut celle du conteneur de test (port 55432, cf. README) ;
+# l'intégration continue fournit la sienne via DATABASE_URL.
+os.environ.setdefault(
+    "DATABASE_URL", "postgresql+psycopg://aviadb:test@localhost:55432/aviadb_test"
+)
 os.environ.setdefault("UPLOAD_DIR", f"{TMP_DIR}/uploads")
 os.environ["SECRET_KEY"] = "test-secret-key"
 os.environ["ADMIN_PASSWORD"] = "test-password"

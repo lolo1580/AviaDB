@@ -1,9 +1,12 @@
-"""Migrations légères et idempotentes pour SQLite.
+"""Ajout idempotent des colonnes manquantes (PostgreSQL).
 
-`Base.metadata.create_all` crée les tables manquantes mais n'ajoute jamais de
-colonne à une table existante. Comme une base peut déjà exister (volume monté),
-on vient compléter le schéma au démarrage : chaque colonne manquante est ajoutée
-via `ALTER TABLE ... ADD COLUMN`, sans rien détruire.
+`Base.metadata.create_all` crée les tables absentes mais ne modifie jamais une
+table existante. Comme une base peut déjà contenir des données, on complète le
+schéma au démarrage : chaque colonne manquante est ajoutée par
+`ALTER TABLE ... ADD COLUMN`, sans rien détruire ni perdre de données.
+
+Pour des évolutions plus lourdes (renommage, contrainte, index), passer à un
+outil de migration dédié type Alembic.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "loan_date": "DATE",
         "loan_due_date": "DATE",
         "currency": "VARCHAR(3)",
-        "purchase_eur_value": "FLOAT",
+        "purchase_eur_value": "DOUBLE PRECISION",
         "purchase_rate_date": "DATE",
     },
 }

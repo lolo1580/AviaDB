@@ -1,4 +1,4 @@
-"""Modèles SQLAlchemy (SQLite).
+"""Modèles SQLAlchemy (PostgreSQL).
 
 Schéma : une table socle `items` reliée à des tables d'attributs spécifiques.
 Toutes les colonnes de `items` sont optionnelles (hors `name`/`item_type`/`status`)
@@ -76,7 +76,8 @@ class UserRole(str, enum.Enum):
 
 
 def _enum(enum_cls: type[enum.Enum]) -> SAEnum:
-    """Stocke les énumérations en VARCHAR (portable SQLite) plutôt qu'en type natif."""
+    """Stocke les énumérations en VARCHAR (avec contrainte) plutôt qu'en type
+    énuméré natif : les valeurs restent lisibles et les migrations sont simples."""
     return SAEnum(enum_cls, native_enum=False, validate_strings=True, length=32)
 
 

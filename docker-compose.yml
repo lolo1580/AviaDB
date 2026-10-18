@@ -34,7 +34,7 @@ services:
     container_name: aviadb-backend
     restart: unless-stopped
     environment:
-      # PostgreSQL ; remettez « sqlite:////app/data/aviadb.db » pour revenir à SQLite.
+      # Base PostgreSQL du service « db ».
       DATABASE_URL: postgresql+psycopg://aviadb:${POSTGRES_PASSWORD:-change-me}@db:5432/aviadb
       # Images uniquement : la base vit désormais dans le volume PostgreSQL.
       UPLOAD_DIR: /app/data/uploads
