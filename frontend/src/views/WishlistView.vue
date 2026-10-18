@@ -52,9 +52,9 @@ function editItem(item) {
 }
 
 // La liste est filtrée sur le statut « Recherché » : toute création y arrive.
-function onCreate({ payload, files }) {
+function onCreate({ payload, files, links }) {
   showForm.value = false
-  list.create({ ...payload, status: 'WANTED' }, files)
+  list.create({ ...payload, status: 'WANTED' }, files, links)
 }
 
 function onUpdate({ id, payload }) {
@@ -197,6 +197,7 @@ async function markAcquired(item) {
     </div>
 
     <ItemFormModal
+      mode="wishlist"
       :open="showForm && canWrite()"
       :item="editing"
       :enums="enums"

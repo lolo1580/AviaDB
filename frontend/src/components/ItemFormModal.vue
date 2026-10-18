@@ -15,10 +15,18 @@ const props = defineProps({
   item: { type: Object, default: null },
   enums: { type: Object, default: null },
   open: { type: Boolean, default: false },
+  /** 'default' (collection) ou 'wishlist' (pièce recherchée : champs adaptés). */
+  mode: { type: String, default: 'default' },
 })
 const emit = defineEmits(['close', 'create', 'update', 'remove'])
 
 const isEdit = computed(() => Boolean(props.item?.id))
+const isWishlist = computed(() => props.mode === 'wishlist')
+
+// Liens : brouillons sur un objet à créer, appels immédiats en modification.
+const linkDraft = reactive({ url: '', label: '' })
+const pendingLinks = ref([])
+const links = ref([])
 const formId = `item-form-${Math.random().toString(36).slice(2, 7)}`
 
 const error = ref('')
@@ -59,6 +67,18 @@ function toNum(value) {
 
 const classOptions = computed(() => flattenedClasses())
 
+/** Intitulés adaptés au mode (collection ou pièce recherchée). */
+const titre = computed(() => {
+  if (isWishlist.value) return isEdit.value ? 'Modifier la pièce recherchée' : 'Nouvelle pièce recherchée'
+  return isEdit.value ? 'Modifier l’objet' : 'Nouvel objet'
+})
+
+const sousTitre = computed(() =>
+  isWishlist.value
+    ? 'Ce que vous cherchez : les champs d’acquisition viendront une fois la pièce trouvée.'
+    : 'Renseignez la fiche : les détails changent selon le type.',
+)
+
 const currencyOptions = computed(() =>
   settings.currencies.length
     ? settings.currencies
@@ -74,6 +94,8 @@ const currencyOptions = computed(() =>
 async function initialize() {
   error.value = ''
   pendingFiles.value = []
+  pendingLinks.value = []
+  links.value = []
   lightboxIndex.value = null
   photos.value = []
 
@@ -116,6 +138,8 @@ async function initialize() {
   if (it.diecast) Object.assign(form.diecast, it.diecast)
   if (it.patch) Object.assign(form.patch, it.patch)
 
+  links.value = it.links ? [...it.links] : []
+
   if (isEdit.value) {
     try {
       photos.value = await api.listPhotos(it.id)
@@ -139,10 +163,11 @@ function buildPayload() {
     item_type: form.item_type,
     country: form.country || null,
     aircraft_model: form.aircraft_model || null,
-    storage_location: form.storage_location || null,
-    status: form.status,
-    purchase_date: form.purchase_date || null,
-    purchase_price: toNum(form.purchase_price),
+    storage_location: isWishlist.value ? null : form.storage_location || null,
+    // Une pièce recherchée reste « Recherché » : le statut n'est pas éditable ici.
+    status: isWishlist.value ? 'WANTED' : form.status,
+    purchase_date: isWishlist.value ? null : form.purchase_date || null,
+    purchase_price: isWishlist.value ? null : toNum(form.purchase_price),
     estimated_value: toNum(form.estimated_value),
     currency: form.currency || settings.default_currency,
     class_id: form.class_id === '' || form.class_id === null ? null : Number(form.class_id),
@@ -175,7 +200,7 @@ function submit() {
   error.value = ''
   const payload = buildPayload()
   if (isEdit.value) emit('update', { id: props.item.id, payload })
-  else emit('create', { payload, files: [...pendingFiles.value] })
+  else emit('create', { payload, files: [...pendingFiles.value], links: [...pendingLinks.value] })
 }
 
 // --------------------------------------------------------------------------- #
@@ -317,6 +342,61 @@ async function move(from, to) {
   })
 }
 
+async function addLink() {
+  const url = linkDraft.url.trim()
+  if (!url) return
+  const label = linkDraft.label.trim() || null
+  linkDraft.url = ''
+  linkDraft.label = ''
+
+  if (!isEdit.value) {
+    pendingLinks.value.push({ url, label })
+    return
+  }
+
+  const placeholder = { id: tempId('link'), url, label }
+  links.value.push(placeholder)
+  await optimistic({
+    key: `links:${props.item.id}`,
+    label: 'Ajout du lien',
+    apply: () => () => {
+      const index = links.value.findIndex((entry) => entry.id === placeholder.id)
+      if (index !== -1) links.value.splice(index, 1)
+    },
+    request: () => api.addLink(props.item.id, { url, label }),
+    onSuccess: (created) => {
+      const index = links.value.findIndex((entry) => entry.id === placeholder.id)
+      if (index !== -1) links.value.splice(index, 1, created)
+    },
+  })
+}
+
+async function removeLink(link) {
+  if (!isEdit.value) {
+    pendingLinks.value = pendingLinks.value.filter((entry) => entry !== link)
+    return
+  }
+  const index = links.value.findIndex((entry) => entry.id === link.id)
+  if (index === -1) return
+  const [removed] = links.value.splice(index, 1)
+  await optimistic({
+    key: `links:${props.item.id}`,
+    label: 'Suppression du lien',
+    apply: () => () => {
+      links.value.splice(index, 0, removed)
+    },
+    request: () => api.deleteLink(link.id),
+  })
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
+}
+
 function photoSource(photo) {
   if (photo._preview) return photo._preview
   return photoUrl(photo.thumb_path || photo.file_path)
@@ -332,8 +412,8 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
   <AppModal
     :open="open"
     size="lg"
-    :title="isEdit ? 'Modifier l’objet' : 'Nouvel objet'"
-    subtitle="Renseignez la fiche : les détails changent selon le type."
+    :title="titre"
+    :subtitle="sousTitre"
     @update:open="$emit('close')"
   >
     <form :id="formId" novalidate class="space-y-6" @submit.prevent="submit">
@@ -353,7 +433,7 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
           </select>
         </label>
 
-        <label class="flex flex-col gap-1">
+        <label v-if="!isWishlist" class="flex flex-col gap-1">
           <span :class="labelClass">Statut</span>
           <select v-model="form.status" :class="inputClass">
             <option v-for="s in enums?.statuses || []" :key="s" :value="s">{{ STATUS_LABEL[s] }}</option>
@@ -370,7 +450,7 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
           <input v-model="form.aircraft_model" :class="inputClass" placeholder="Rafale M" />
         </label>
 
-        <label class="flex flex-col gap-1">
+        <label v-if="!isWishlist" class="flex flex-col gap-1">
           <span :class="labelClass">Emplacement</span>
           <input v-model="form.storage_location" :class="inputClass" placeholder="Vitrine Salon Étage 2" />
         </label>
@@ -390,7 +470,7 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
           </select>
         </label>
 
-        <label class="flex flex-col gap-1">
+        <label v-if="!isWishlist" class="flex flex-col gap-1">
           <span :class="labelClass">Date d’achat</span>
           <input
             v-model="form.purchase_date"
@@ -410,13 +490,15 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
           </select>
         </label>
 
-        <label class="flex flex-col gap-1">
+        <label v-if="!isWishlist" class="flex flex-col gap-1">
           <span :class="labelClass">Prix d’achat ({{ form.currency }})</span>
           <input v-model="form.purchase_price" type="number" min="0" step="0.01" :class="inputClass" />
         </label>
 
         <label class="flex flex-col gap-1">
-          <span :class="labelClass">Valeur estimée ({{ form.currency }})</span>
+          <span :class="labelClass">
+            {{ isWishlist ? `Budget visé (${form.currency})` : `Valeur estimée (${form.currency})` }}
+          </span>
           <input v-model="form.estimated_value" type="number" min="0" step="0.01" :class="inputClass" />
         </label>
 
@@ -503,6 +585,63 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
           </label>
         </div>
       </fieldset>
+
+      <!-- Liens (une pièce recherchée vit souvent sur plusieurs boutiques) -->
+      <section v-if="isWishlist" class="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+        <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">
+          Liens ({{ isEdit ? links.length : pendingLinks.length }})
+        </h3>
+        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          Où vous avez repéré cette pièce. Le prix pourra y être relevé depuis le panneau de détail.
+        </p>
+
+        <ul v-if="isEdit && links.length" class="mt-3 space-y-1">
+          <li
+            v-for="link in links"
+            :key="link.id"
+            class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-800"
+          >
+            <span class="truncate text-slate-800 dark:text-slate-200">{{ link.label || hostOf(link.url) }}</span>
+            <a :href="link.url" target="_blank" rel="noopener noreferrer" class="truncate text-xs text-sky-600 hover:underline dark:text-sky-400">
+              {{ link.url }}
+            </a>
+            <button type="button" class="ml-auto text-rose-600 hover:underline dark:text-rose-400" @click="removeLink(link)">
+              ✕
+            </button>
+          </li>
+        </ul>
+
+        <ul v-else-if="!isEdit && pendingLinks.length" class="mt-3 space-y-1">
+          <li
+            v-for="(link, index) in pendingLinks"
+            :key="index"
+            class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-800"
+          >
+            <span class="truncate text-slate-800 dark:text-slate-200">{{ link.label || hostOf(link.url) }}</span>
+            <span class="truncate text-xs text-slate-400 dark:text-slate-500">{{ link.url }}</span>
+            <button type="button" class="ml-auto text-rose-600 hover:underline dark:text-rose-400" @click="removeLink(link)">
+              ✕
+            </button>
+          </li>
+        </ul>
+
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            v-model="linkDraft.url"
+            placeholder="https://boutique.fr/rafale"
+            :class="[inputClass, 'min-w-48 flex-1']"
+          />
+          <input v-model="linkDraft.label" placeholder="Libellé (facultatif)" :class="[inputClass, 'w-40']" />
+          <AppButton
+            variant="secondary"
+            size="sm"
+            :disabled="!linkDraft.url.trim()"
+            @click="addLink"
+          >
+            Ajouter le lien
+          </AppButton>
+        </div>
+      </section>
 
       <!-- Photos -->
       <section class="rounded-xl border border-slate-200 p-4 dark:border-slate-800">

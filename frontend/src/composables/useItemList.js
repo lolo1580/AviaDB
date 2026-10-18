@@ -42,8 +42,26 @@ export function useItemList({ limit = 200, refreshStats } = {}) {
       patch: payload.patch ?? null,
       tags: (payload.tags || []).map((name) => ({ id: tempId('tag'), name })),
       photos: [],
+      links: [],
+      price_points: [],
       _optimistic: true,
     }
+  }
+
+  /** Ajoute les liens d'un objet créé, en tâche de fond. */
+  async function attachLinks(itemId, links = []) {
+    for (const link of links) {
+      await optimistic({
+        key: key(itemId),
+        label: 'Ajout du lien',
+        request: () => api.addLink(itemId, link),
+        onSuccess: (created) => {
+          const item = items.value.find((entry) => entry.id === itemId)
+          if (item) item.links = [...(item.links || []), created]
+        },
+      })
+    }
+    if (links.length) refreshStats?.()
   }
 
   /** Téléverse les photos d'un objet, en tâche de fond. */
@@ -65,7 +83,7 @@ export function useItemList({ limit = 200, refreshStats } = {}) {
   // ------------------------------------------------------------------------- #
   // Mutations
   // ------------------------------------------------------------------------- #
-  async function create(payload, files = []) {
+  async function create(payload, files = [], links = []) {
     const local = localFrom(payload)
     items.value.unshift(local)
     total.value += 1
@@ -84,8 +102,9 @@ export function useItemList({ limit = 200, refreshStats } = {}) {
         const index = indexOf(local.id)
         if (index !== -1) items.value.splice(index, 1, created)
         uploadFiles(created.id, files)
+        attachLinks(created.id, links)
       },
-      retry: () => create(payload, files),
+      retry: () => create(payload, files, links),
     })
 
     if (result.ok) {

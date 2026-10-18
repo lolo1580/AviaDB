@@ -427,7 +427,8 @@ curl -H "X-API-Key: aviadb_…" https://<hote>/api/public/stats
 Dans le panneau latéral de n'importe quel objet (pas seulement les souhaits) :
 
 **Liens** — plusieurs adresses par objet, avec un libellé facultatif (boutique,
-fiche technique, référence). Ils s'ouvrent dans un nouvel onglet.
+fiche technique, référence). Ils s'ouvrent dans un nouvel onglet. On peut les saisir
+dès la création d'une pièce recherchée, ou les ajouter ensuite depuis le panneau.
 
 **Relevés de prix** — pour chaque observation, la date, le montant, la devise et
 une note. La courbe d'évolution s'affiche juste au-dessus, exprimée dans la devise
@@ -452,8 +453,11 @@ Liens et relevés sont inclus dans la **sauvegarde ZIP** et restaurés avec l'ob
 
 ## Autres écrans
 
-- **Souhaits** (`/souhaits`) : pièces au statut « Recherché », avec budget
-  estimé cumulé et bouton « marquer comme acquis ».
+- **Souhaits** (`/souhaits`) : pièces au statut « Recherché », avec budget cumulé
+  et bouton « marquer comme acquis ». Le **formulaire y est adapté** : ni statut, ni
+  emplacement, ni date et prix d'achat — des champs sans objet pour une pièce qu'on
+  ne possède pas encore. À la place, le **budget visé** et les **liens** vers les
+  boutiques, créés en même temps que l'objet.
 - **Statistiques** (`/statistiques`) : graphiques (type, statut, pays, valeur par
   pays, acquisitions par année, échelle, matière des patchs) via Chart.js.
 
