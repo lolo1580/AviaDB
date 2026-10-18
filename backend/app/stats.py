@@ -39,8 +39,13 @@ def _currency_buckets(db: Session, base: str) -> list[schemas.CountBucket]:
     ]
 
 
-def compute_stats(db: Session) -> schemas.StatsOut:
-    """Compteurs, valeurs et répartitions, dans la devise de référence."""
+def compute_stats(db: Session, *, include_details: bool = False) -> schemas.StatsOut:
+    """Compteurs, valeurs et répartitions, dans la devise de référence.
+
+    `include_details` ajoute les analytiques réservés à la session authentifiée
+    (valeur par classe, par emplacement, par année, plus-values) : l'API publique
+    ne doit exposer aucun emplacement ni écart de valeur par objet.
+    """
     total_items = db.scalar(select(func.count()).select_from(models.Item)) or 0
     total_photos = db.scalar(select(func.count()).select_from(models.ItemPhoto)) or 0
 
@@ -179,6 +184,104 @@ def compute_stats(db: Session) -> schemas.StatsOut:
         for key, count in sorted(class_counts.items(), key=lambda pair: -pair[1])
     ]
 
+    # ----------------------------------------------------------------------- #
+    # Analytiques détaillés (session uniquement)
+    # ----------------------------------------------------------------------- #
+    value_by_class: list[schemas.ValueBucket] = []
+    value_by_location: list[schemas.ValueBucket] = []
+    value_by_year: list[schemas.ValueBucket] = []
+    top_gains: list[schemas.ItemValueBucket] = []
+    top_losses: list[schemas.ItemValueBucket] = []
+
+    if include_details:
+        # Valeur estimée par classe racine.
+        class_value_rows = db.execute(
+            select(
+                models.Item.class_id,
+                models.Item.currency,
+                func.sum(models.Item.estimated_value),
+            )
+            .where(models.Item.estimated_value.isnot(None))
+            .group_by(models.Item.class_id, models.Item.currency)
+        ).all()
+        class_values: dict[str, float] = {}
+        for class_id, code, total in class_value_rows:
+            key = (roots.get(class_id) if class_id is not None else None) or "Sans classe"
+            class_values[key] = class_values.get(key, 0.0) + currency.to_base(
+                float(total or 0.0), code, base, rates
+            )
+        value_by_class = [
+            schemas.ValueBucket(key=key, value=round(value, 2))
+            for key, value in sorted(class_values.items(), key=lambda pair: -pair[1])
+        ]
+
+        # Valeur estimée par emplacement de stockage.
+        location_rows = db.execute(
+            select(
+                models.Item.storage_location,
+                models.Item.currency,
+                func.sum(models.Item.estimated_value),
+            )
+            .where(models.Item.estimated_value.isnot(None))
+            .group_by(models.Item.storage_location, models.Item.currency)
+        ).all()
+        location_values: dict[str, float] = {}
+        for location, code, total in location_rows:
+            key = location or "Sans emplacement"
+            location_values[key] = location_values.get(key, 0.0) + currency.to_base(
+                float(total or 0.0), code, base, rates
+            )
+        value_by_location = [
+            schemas.ValueBucket(key=key, value=round(value, 2))
+            for key, value in sorted(location_values.items(), key=lambda pair: -pair[1])
+        ]
+
+        # Valeur d'acquisition par année (équivalent EUR figé, puis devise de référence).
+        year_value_rows = db.execute(
+            select(
+                year_column,
+                models.Item.currency,
+                models.Item.purchase_eur_value,
+                models.Item.purchase_price,
+            ).where(
+                models.Item.purchase_date.isnot(None),
+                models.Item.purchase_price.isnot(None),
+            )
+        ).all()
+        year_values: dict[str, float] = {}
+        for year, code, eur_value, price in year_value_rows:
+            if eur_value is None:
+                eur_value = currency.to_eur(float(price), code, rates)
+            year_values[year] = year_values.get(year, 0.0) + float(eur_value) * rates.get(base, 1.0)
+        value_by_year = [
+            schemas.ValueBucket(key=year, value=round(value, 2))
+            for year, value in sorted(year_values.items())
+        ]
+
+        # Plus-values / moins-values par objet.
+        gains: list[schemas.ItemValueBucket] = []
+        for item in db.scalars(
+            select(models.Item).where(models.Item.estimated_value.isnot(None))
+        ).all():
+            if item.purchase_price is None and item.purchase_eur_value is None:
+                continue
+            estimated = currency.to_base(float(item.estimated_value), item.currency, base, rates)
+            purchase_eur = item.purchase_eur_value
+            if purchase_eur is None:
+                purchase_eur = currency.to_eur(float(item.purchase_price), item.currency, rates)
+            purchase = float(purchase_eur) * rates.get(base, 1.0)
+            gains.append(
+                schemas.ItemValueBucket(
+                    id=item.id,
+                    name=item.name,
+                    estimated_value=round(estimated, 2),
+                    purchase_value=round(purchase, 2),
+                    gain=round(estimated - purchase, 2),
+                )
+            )
+        top_gains = sorted((g for g in gains if g.gain > 0), key=lambda g: -g.gain)[:5]
+        top_losses = sorted((g for g in gains if g.gain < 0), key=lambda g: g.gain)[:5]
+
     return schemas.StatsOut(
         total_items=total_items,
         total_photos=total_photos,
@@ -197,4 +300,9 @@ def compute_stats(db: Session) -> schemas.StatsOut:
         by_class=by_class,
         by_year=by_year,
         value_by_country=value_by_country,
+        value_by_class=value_by_class,
+        value_by_location=value_by_location,
+        value_by_year=value_by_year,
+        top_gains=top_gains,
+        top_losses=top_losses,
     )

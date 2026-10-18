@@ -9,7 +9,7 @@ ou tout autre objet.
 from __future__ import annotations
 
 import enum
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     Boolean,
@@ -31,7 +31,7 @@ from .database import Base
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # --------------------------------------------------------------------------- #
@@ -348,3 +348,20 @@ class Setting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(Text)  # valeur JSON
+
+
+# --------------------------------------------------------------------------- #
+# Journal d'activité (audit des requêtes de modification)
+# --------------------------------------------------------------------------- #
+class ActivityLog(Base):
+    __tablename__ = "activity_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    username: Mapped[str | None] = mapped_column(String(64))  # None = session anonyme
+    method: Mapped[str] = mapped_column(String(8))
+    path: Mapped[str] = mapped_column(String(255))
+    status_code: Mapped[int] = mapped_column(Integer)
+
+    def __repr__(self) -> str:  # pragma: no cover - confort de debug
+        return f"<ActivityLog {self.method} {self.path} -> {self.status_code}>"

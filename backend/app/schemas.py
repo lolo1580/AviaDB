@@ -248,6 +248,16 @@ class ValueBucket(BaseModel):
     value: float
 
 
+class ItemValueBucket(BaseModel):
+    """Écart de valeur d'un objet (estimation − achat), dans la devise de référence."""
+
+    id: int
+    name: str
+    estimated_value: float | None = None
+    purchase_value: float | None = None
+    gain: float = 0.0
+
+
 class StatsOut(BaseModel):
     total_items: int
     total_photos: int
@@ -266,6 +276,13 @@ class StatsOut(BaseModel):
     by_class: list[CountBucket]
     by_year: list[CountBucket]
     value_by_country: list[ValueBucket]
+    # Détails réservés à la session authentifiée : l'API publique ne les expose
+    # pas (emplacements et écarts de valeur par objet).
+    value_by_class: list[ValueBucket] = Field(default_factory=list)
+    value_by_location: list[ValueBucket] = Field(default_factory=list)
+    value_by_year: list[ValueBucket] = Field(default_factory=list)
+    top_gains: list[ItemValueBucket] = Field(default_factory=list)
+    top_losses: list[ItemValueBucket] = Field(default_factory=list)
 
 
 class CurrencyOption(BaseModel):
@@ -347,6 +364,17 @@ class UserOut(ORMModel):
     is_active: bool
     created_at: datetime
     last_login_at: datetime | None = None
+
+
+class ActivityOut(ORMModel):
+    """Entrée du journal d'activité (audit)."""
+
+    id: int
+    at: datetime
+    username: str | None = None
+    method: str
+    path: str
+    status_code: int
 
 
 class RestoreResultOut(BaseModel):

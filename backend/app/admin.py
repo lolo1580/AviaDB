@@ -8,15 +8,26 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse, StreamingResponse
-from starlette.background import BackgroundTask
-from sqlalchemy import delete as sa_delete, func, select
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
+from starlette.background import BackgroundTask
 
-from . import api_keys, auth, backup, crud, currency, media, models, pricing, schemas
+from . import api_keys, auth, backup, crud, currency, media, models, pricing, report, schemas
 from .database import get_db
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -149,7 +160,7 @@ def bulk_action(payload: schemas.BulkActionIn, db: Session = Depends(get_db)):
 def export_json(db: Session = Depends(get_db)):
     items = _all_items(db)
     return schemas.ExportOut(
-        exported_at=datetime.now(timezone.utc),
+        exported_at=datetime.now(UTC),
         total=len(items),
         items=[schemas.ItemOut.model_validate(i) for i in items],
     )
@@ -163,7 +174,7 @@ def export_csv(db: Session = Depends(get_db)):
     for item in _all_items(db):
         writer.writerow(_csv_row(item))
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     return StreamingResponse(
         iter([buffer.getvalue()]),
         media_type="text/csv; charset=utf-8",
@@ -174,13 +185,26 @@ def export_csv(db: Session = Depends(get_db)):
 @router.get("/backup")
 def download_backup(db: Session = Depends(get_db)):
     """Archive ZIP : aviadb.json (objets, réglages, comptes) + toutes les images."""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     path = backup.build_backup_file(db)
     return FileResponse(
         path,
         media_type="application/zip",
         filename=f"aviadb-backup-{stamp}.zip",
         background=BackgroundTask(path.unlink, missing_ok=True),
+    )
+
+
+@router.get("/report.pdf")
+def inventory_report(db: Session = Depends(get_db)):
+    """Rapport d'inventaire (PDF) : totaux et liste détaillée des objets."""
+    stamp = datetime.now(UTC).strftime("%Y%m%d")
+    return Response(
+        content=report.build_inventory_pdf(db),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="aviadb-inventaire-{stamp}.pdf"'
+        },
     )
 
 
@@ -282,8 +306,12 @@ def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
                     entry[numeric] = None
 
         # Le CSV est à plat : on regroupe les colonnes de détails en objets imbriqués.
-        diecast = {key: entry.get(key) for key in DETAIL_COLUMNS["diecast"] if entry.get(key) is not None}
-        patch = {key: entry.get(key) for key in DETAIL_COLUMNS["patch"] if entry.get(key) is not None}
+        diecast = {
+            key: entry.get(key) for key in DETAIL_COLUMNS["diecast"] if entry.get(key) is not None
+        }
+        patch = {
+            key: entry.get(key) for key in DETAIL_COLUMNS["patch"] if entry.get(key) is not None
+        }
         entry["diecast"] = diecast or None
         entry["patch"] = patch or None
 
@@ -304,7 +332,9 @@ def restore(
     db: Session = Depends(get_db),
 ):
     if mode not in {"merge", "replace"}:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "`mode` doit être « merge » ou « replace »")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "`mode` doit être « merge » ou « replace »"
+        )
     result = backup.restore_backup(db, file, replace=(mode == "replace"))
     return schemas.RestoreResultOut(**result)
 
@@ -334,7 +364,7 @@ def update_settings(payload: schemas.SettingsUpdate, db: Session = Depends(get_d
     try:
         currency.set_base_currency(db, payload.default_currency)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     db.commit()
     return settings_payload(db)
 
@@ -369,8 +399,9 @@ def refresh_rates(db: Session = Depends(get_db)):
     except currency.RateFetchError as exc:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            f"Taux indisponibles ({exc}). Vérifiez l'accès réseau, ou saisissez les taux à la main.",
-        )
+            f"Taux indisponibles ({exc}). Vérifiez l'accès réseau, "
+            "ou saisissez les taux à la main.",
+        ) from exc
     currency.set_rates(db, rates, source)
     db.commit()
     return settings_payload(db)
@@ -406,7 +437,7 @@ def fetch_price(payload: schemas.FetchPriceIn):
     try:
         return schemas.FetchPriceOut(**pricing.fetch_price(payload.url))
     except pricing.PriceFetchError as exc:
-        raise HTTPException(422, str(exc))
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get(
@@ -452,8 +483,14 @@ def update_user(user_id: int, payload: schemas.UserUpdate, db: Session = Depends
     user = _get_user_or_404(db, user_id)
     fields = payload.model_dump(exclude_unset=True)
 
-    demoting = (fields.get("role") not in (None, models.UserRole.ADMIN)) or fields.get("is_active") is False
-    if demoting and user.role == models.UserRole.ADMIN and _admin_count(db, exclude_id=user.id) == 0:
+    demoting = (fields.get("role") not in (None, models.UserRole.ADMIN)) or (
+        fields.get("is_active") is False
+    )
+    if (
+        demoting
+        and user.role == models.UserRole.ADMIN
+        and _admin_count(db, exclude_id=user.id) == 0
+    ):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Impossible de retirer le dernier administrateur actif",
@@ -492,6 +529,23 @@ def delete_user(
     db.delete(user)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------- #
+# Journal d'activité — ADMIN
+# --------------------------------------------------------------------------- #
+@router.get(
+    "/activity",
+    response_model=list[schemas.ActivityOut],
+    dependencies=[Depends(auth.require_admin)],
+)
+def list_activity(limit: int = Query(100, ge=1, le=500), db: Session = Depends(get_db)):
+    """Dernières modifications (audit) : qui a modifié quoi, quand."""
+    return list(
+        db.scalars(
+            select(models.ActivityLog).order_by(models.ActivityLog.at.desc()).limit(limit)
+        ).all()
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -559,7 +613,11 @@ def _ensure_unique_name(
     """
     statement = select(models.ItemClass).where(
         models.ItemClass.name == name,
-        models.ItemClass.parent_id.is_(None) if parent_id is None else models.ItemClass.parent_id == parent_id,
+        (
+            models.ItemClass.parent_id.is_(None)
+            if parent_id is None
+            else models.ItemClass.parent_id == parent_id
+        ),
     )
     if exclude_id is not None:
         statement = statement.where(models.ItemClass.id != exclude_id)
@@ -630,7 +688,11 @@ def update_class(class_id: int, payload: schemas.ClassUpdate, db: Session = Depe
         select(func.count()).select_from(models.Item).where(models.Item.class_id == node.id)
     ) or 0
     return schemas.ClassOut(
-        id=node.id, name=node.name, parent_id=node.parent_id, position=node.position, item_count=used
+        id=node.id,
+        name=node.name,
+        parent_id=node.parent_id,
+        position=node.position,
+        item_count=used,
     )
 
 

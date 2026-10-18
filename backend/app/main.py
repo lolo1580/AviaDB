@@ -8,20 +8,35 @@ leur upload arrivera à l'étape 2.
 
 from __future__ import annotations
 
+import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import date
 from typing import Literal
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import admin, api_keys, auth, crud, currency, media, migrations, models, schemas
+from . import admin, api_keys, auth, crud, currency, media, migrations, models, report, schemas
 from .database import Base, SessionLocal, engine, get_db
 from .stats import compute_stats
+
+logger = logging.getLogger("aviadb.activity")
 
 # Raccourci : toutes les routes d'écriture exigent un admin authentifié.
 # Les routes GET (consultation) restent publiques.
@@ -50,6 +65,8 @@ async def lifespan(app: FastAPI):
     with SessionLocal() as db:
         auth.bootstrap_admin(db)
         currency.backfill_items(db)
+        # Borne le journal d'activité (voir `prune_activity`).
+        prune_activity(db, _activity_keep())
     yield
 
 
@@ -110,6 +127,86 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --------------------------------------------------------------------------- #
+# Journal d'activité : les requêtes de modification sont tracées (audit).
+# --------------------------------------------------------------------------- #
+_MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+_UNLOGGED_PATHS = {"/api/admin/login"}
+# Fréquence d'élagage : toutes les N écritures journalisées.
+_ACTIVITY_PRUNE_EVERY = 500
+_activity_writes = 0
+
+
+def _activity_keep() -> int:
+    """Nombre d'entrées de journal conservées (minimum 100)."""
+    return max(100, int(os.getenv("ACTIVITY_KEEP", "5000")))
+
+
+def prune_activity(db: Session, keep: int) -> int:
+    """Ne conserve que les `keep` entrées les plus récentes du journal.
+
+    Renvoie le nombre d'entrées supprimées. Le journal est un fichier d'audit, pas
+    une source de vérité : on le borne pour qu'il ne croisse pas indéfiniment.
+    """
+    cutoff = db.scalar(
+        select(models.ActivityLog.id)
+        .order_by(models.ActivityLog.id.desc())
+        .offset(keep)
+        .limit(1)
+    )
+    if cutoff is None:
+        return 0
+    # `cutoff` est l'entrée à la frontière : on la supprime aussi (`<=`) pour ne
+    # conserver exactement que `keep` lignes.
+    result = db.execute(delete(models.ActivityLog).where(models.ActivityLog.id <= cutoff))
+    db.commit()
+    return int(result.rowcount or 0)
+
+
+def _maybe_prune_activity(db: Session) -> None:
+    global _activity_writes
+    _activity_writes += 1
+    if _activity_writes % _ACTIVITY_PRUNE_EVERY == 0:
+        prune_activity(db, _activity_keep())
+
+
+async def _record_activity(request: Request, call_next):
+    """Écrit une entrée d'audit après chaque requête d'écriture. Ne bloque jamais."""
+    response = await call_next(request)
+    path = request.url.path
+    if (
+        request.method not in _MUTATING_METHODS
+        or not path.startswith("/api/")
+        or path in _UNLOGGED_PATHS
+        or response.status_code >= 500
+    ):
+        return response
+
+    try:
+        claims = auth.verify_token(
+            auth.token_from(
+                request.headers.get("authorization"),
+                request.cookies.get(auth.COOKIE_NAME),
+            )
+        )
+        with SessionLocal() as db:
+            db.add(
+                models.ActivityLog(
+                    username=claims.get("sub") if claims else None,
+                    method=request.method,
+                    path=path[:255],
+                    status_code=response.status_code,
+                )
+            )
+            db.commit()
+            _maybe_prune_activity(db)
+    except Exception:  # pragma: no cover - l'audit ne doit jamais casser une requête
+        logger.exception("Échec d'écriture du journal d'activité")
+    return response
+
+
+app.middleware("http")(_record_activity)
 
 # Fichiers médias servis en statique : /uploads/items/<id>/<uuid>.webp
 media.ensure_upload_dir()
@@ -290,7 +387,9 @@ _SORT_COLUMNS = {
 # --------------------------------------------------------------------------- #
 @app.get("/api/items", response_model=schemas.ItemListOut, tags=["items"])
 def list_items(
-    q: str | None = Query(None, description="Recherche texte (nom, modèle, immat., unité, notes...)"),
+    q: str | None = Query(
+        None, description="Recherche texte (nom, modèle, immat., unité, notes...)"
+    ),
     item_type: list[models.ItemType] | None = Query(None),
     status: list[models.ItemStatus] | None = Query(None),
     country: list[str] | None = Query(None),
@@ -383,6 +482,19 @@ def create_item(payload: schemas.ItemCreate, db: Session = Depends(get_db)):
 @app.get("/api/items/{item_id}", response_model=schemas.ItemOut, tags=["items"])
 def get_item(item_id: int, db: Session = Depends(get_db)):
     return _load_item(db, item_id)
+
+
+@app.get("/api/items/{item_id}/report.pdf", tags=["items"])
+def item_report(item_id: int, db: Session = Depends(get_db)):
+    """Fiche détaillée d'un objet (PDF) : photo, caractéristiques et historique."""
+    item = _load_item(db, item_id)
+    return Response(
+        content=report.build_item_pdf(db, item),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="aviadb-fiche-{item.id}.pdf"'
+        },
+    )
 
 
 @app.patch(
@@ -593,8 +705,12 @@ def reorder_photos(item_id: int, payload: schemas.PhotoReorderIn, db: Session = 
 # --------------------------------------------------------------------------- #
 @app.get("/api/stats", response_model=schemas.StatsOut, tags=["stats"])
 def stats(db: Session = Depends(get_db)):
-    """Compteurs, valeurs et répartitions (devise de référence)."""
-    return compute_stats(db)
+    """Compteurs, valeurs et répartitions (devise de référence).
+
+    Inclut les analytiques détaillés (valeur par classe, emplacement, année,
+    plus-values) : la route exige une session, contrairement à l'API publique.
+    """
+    return compute_stats(db, include_details=True)
 
 
 @app.get("/api/meta/facets", response_model=schemas.FacetsOut, tags=["meta"])
