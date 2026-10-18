@@ -9,11 +9,13 @@ RUN npm install --no-audit --no-fund
 COPY . .
 RUN npm run build
 
-# Documentation d'API autonome : page statique + Redoc embarqué (aucun CDN,
-# donc fonctionnelle sans accès Internet).
+# Documentation d'API autonome : pages statiques + Redoc et Swagger UI embarqués
+# (aucun CDN, donc fonctionnelles sans accès Internet).
 RUN mkdir -p /app/docs-dist \
     && cp -r docs/. /app/docs-dist/ \
-    && cp node_modules/redoc/bundles/redoc.standalone.js /app/docs-dist/redoc.standalone.js
+    && cp node_modules/redoc/bundles/redoc.standalone.js /app/docs-dist/redoc.standalone.js \
+    && cp node_modules/swagger-ui-dist/swagger-ui-bundle.js /app/docs-dist/ \
+    && cp node_modules/swagger-ui-dist/swagger-ui.css /app/docs-dist/
 
 # Étape 2 — service statique via Nginx, avec proxy vers l'API
 FROM nginx:1.27-alpine

@@ -57,7 +57,7 @@ Le fichier `docker-compose.yml` démarre trois services : **db** (PostgreSQL 18)
 **backend** (FastAPI) et **frontend** (Nginx qui sert la SPA et relaie `/api`).
 
 - Interface : <http://localhost:8080>
-- Documentation de l'API : <http://localhost:8080/api-docs/>
+- Documentation de l'API : <http://localhost:8080/api-docs/> (et `/api-docs/swagger.html` pour les essais)
 - API (Swagger intégré) : <http://localhost:8000/docs>
 - PostgreSQL : `localhost:5434` (5432 est réservé au PostgreSQL du système)
 
@@ -80,7 +80,7 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
 ```
 
 - Interface : `http://<ip-hote>/` (port **80**)
-- Documentation de l'API : `http://<ip-hote>/api-docs/`
+- Documentation de l'API : `http://<ip-hote>/api-docs/` et `…/api-docs/swagger.html`
 - API : `http://<ip-hote>:8000/` (Swagger sur `/docs`)
 
 Nginx proxifie alors vers `127.0.0.1:8000` au lieu du DNS Compose (`BACKEND_URL`).
@@ -150,8 +150,9 @@ aviadb/
 │   │   ├── theme.js      # thème clair/sombre (persistant)
 │   │   ├── router.js     # /, /souhaits, /statistiques, /admin
 │   │   └── api.js        # client REST
+│   ├── docs/             # pages de documentation : index.html (Redoc),
+│   │                     # swagger.html (Swagger UI), style.css partagé
 │   ├── nginx.conf.template  # SPA, documentation /api-docs, proxy /api et /uploads
-│   ├── docs/index.html   # page de documentation autonome (Redoc)
 │   ├── Dockerfile        # multi-stage : build Vite → Nginx
 │   └── package.json
 ├── .github/workflows/ci.yml  # intégration continue (pytest PostgreSQL, build)
@@ -197,18 +198,29 @@ Toutes les routes sont préfixées par `/api`.
 
 ### Documentation de l'API
 
-Une **page dédiée** présente l'API complète, en dehors de l'application :
+Deux **pages dédiées** présentent l'API, en dehors de l'application :
 
-**<http://localhost:8080/api-docs/>** (ou `http://<ip-hote>/api-docs/` en réseau hôte)
+| Page | URL | Usage |
+|---|---|---|
+| **Documentation** (Redoc) | `/api-docs/` | lecture : typographie soignée, exemples, sommaire |
+| **Essais** (Swagger UI) | `/api-docs/swagger.html` | exécution : *Try it out* appelle réellement l'API |
 
-- générée avec **Redoc** depuis le schéma OpenAPI en direct — jamais désynchronisée
-  du code ;
-- **embarquée** dans l'image (aucun CDN) : elle fonctionne sans accès Internet ;
-- **hors de la SPA** : une page statique autonome, à ouvrir dans son propre onglet.
-  Le lien se trouve dans le menu utilisateur de l'application ;
+En local : <http://localhost:8080/api-docs/> (et `…/api-docs/swagger.html`).
+
+- générées depuis le schéma OpenAPI **en direct** — jamais désynchronisées du code ;
+- **embarquées** dans l'image (Redoc et Swagger UI servis localement, aucun CDN) :
+  elles fonctionnent sans accès Internet, contrairement à `/docs` de FastAPI ;
+- **hors de la SPA** : pages statiques autonomes, à ouvrir dans leur propre onglet.
+  Le lien se trouve dans le menu utilisateur de l'application, et les deux pages
+  renvoient l'une à l'autre ;
 - le schéma est protégé comme le reste : sans session, la page affiche
   « Connexion requise » et renvoie vers l'application ;
+- **Try it out** utilise la session en cours : aucune saisie de jeton, et les
+  requêtes partent de la même origine (cookie transmis) ;
 - un bouton « Télécharger le schéma » récupère `openapi.json`.
+
+`/docs` (Swagger UI fourni par FastAPI) et `/redoc` restent disponibles sur le port
+8000 si vous préférez la version servie par le framework.
 
 | Méthode | Route | Description |
 |---|---|---|
