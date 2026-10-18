@@ -71,6 +71,21 @@ const roleLabel = computed(() => (auth.role === 'ADMIN' ? 'Administrateur' : 'Le
             <AppIcon name="admin" size="h-4 w-4" />
             Administration
           </RouterLink>
+
+          <!-- Documentation de l'API : page autonome, hors de l'application -->
+          <a
+            href="/api-docs/"
+            target="_blank"
+            rel="noopener"
+            class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+            role="menuitem"
+            @click="open = false"
+          >
+            <AppIcon name="book" size="h-4 w-4" />
+            Documentation de l’API
+            <AppIcon name="external" size="h-3 w-3" class="ml-auto text-slate-400" />
+          </a>
+
           <button
             type="button"
             class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/50"

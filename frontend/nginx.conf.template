@@ -18,6 +18,22 @@ server {
         try_files $uri =404;
     }
 
+    # Documentation de l'API : page dédiée, hors de la SPA.
+    location = /api-docs {
+        return 301 /api-docs/;
+    }
+
+    location /api-docs/ {
+        try_files $uri $uri/ /api-docs/index.html;
+    }
+
+    # Schéma OpenAPI, consommé par la page de documentation (même origine, donc
+    # le cookie de session est transmis).
+    location = /openapi.json {
+        proxy_pass ${BACKEND_URL};
+        proxy_set_header Host $host;
+    }
+
     # URL du backend, injectée au démarrage du conteneur (envsubst).
     # Réseau bridge : http://backend:8000 — réseau hôte : http://127.0.0.1:8000
     location /api/ {

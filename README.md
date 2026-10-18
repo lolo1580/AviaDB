@@ -57,7 +57,8 @@ Le fichier `docker-compose.yml` démarre trois services : **db** (PostgreSQL 18)
 **backend** (FastAPI) et **frontend** (Nginx qui sert la SPA et relaie `/api`).
 
 - Interface : <http://localhost:8080>
-- API (Swagger) : <http://localhost:8000/docs>
+- Documentation de l'API : <http://localhost:8080/api-docs/>
+- API (Swagger intégré) : <http://localhost:8000/docs>
 - PostgreSQL : `localhost:5434` (5432 est réservé au PostgreSQL du système)
 
 Les objets et les comptes vivent dans le volume Docker `aviadb-pgdata` ; les images
@@ -79,6 +80,7 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
 ```
 
 - Interface : `http://<ip-hote>/` (port **80**)
+- Documentation de l'API : `http://<ip-hote>/api-docs/`
 - API : `http://<ip-hote>:8000/` (Swagger sur `/docs`)
 
 Nginx proxifie alors vers `127.0.0.1:8000` au lieu du DNS Compose (`BACKEND_URL`).
@@ -148,7 +150,8 @@ aviadb/
 │   │   ├── theme.js      # thème clair/sombre (persistant)
 │   │   ├── router.js     # /, /souhaits, /statistiques, /admin
 │   │   └── api.js        # client REST
-│   ├── nginx.conf.template  # SPA + proxy /api et /uploads (BACKEND_URL)
+│   ├── nginx.conf.template  # SPA, documentation /api-docs, proxy /api et /uploads
+│   ├── docs/index.html   # page de documentation autonome (Redoc)
 │   ├── Dockerfile        # multi-stage : build Vite → Nginx
 │   └── package.json
 ├── .github/workflows/ci.yml  # intégration continue (pytest PostgreSQL, build)
@@ -191,6 +194,21 @@ disque avec l'objet.
 ## API
 
 Toutes les routes sont préfixées par `/api`.
+
+### Documentation de l'API
+
+Une **page dédiée** présente l'API complète, en dehors de l'application :
+
+**<http://localhost:8080/api-docs/>** (ou `http://<ip-hote>/api-docs/` en réseau hôte)
+
+- générée avec **Redoc** depuis le schéma OpenAPI en direct — jamais désynchronisée
+  du code ;
+- **embarquée** dans l'image (aucun CDN) : elle fonctionne sans accès Internet ;
+- **hors de la SPA** : une page statique autonome, à ouvrir dans son propre onglet.
+  Le lien se trouve dans le menu utilisateur de l'application ;
+- le schéma est protégé comme le reste : sans session, la page affiche
+  « Connexion requise » et renvoie vers l'application ;
+- un bouton « Télécharger le schéma » récupère `openapi.json`.
 
 | Méthode | Route | Description |
 |---|---|---|
