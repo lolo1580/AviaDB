@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/* Dark mode piloté par la classe `.dark` sur <html> (et non plus seulement par
+   la préférence système), afin de pouvoir le basculer manuellement. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-100 text-slate-800 dark:bg-slate-950 dark:text-slate-100;
+  }
+
+  input,
+  select,
+  textarea {
+    @apply bg-white text-slate-900 dark:bg-slate-800 dark:text-slate-100;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    @apply text-slate-400 dark:text-slate-500;
+  }
+}
+
+/* Scrollbar discrète pour les panneaux de filtres */
+.thin-scroll::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: rgb(148 163 184 / 0.6);
+  border-radius: 9999px;
+}
+
+/* ---------------------------------------------------------------------------
+   Transitions : entrée / sortie des cartes et des notifications.
+   Volontairement courtes — l'affichage optimiste doit rester perçu comme
+   instantané.
+   --------------------------------------------------------------------------- */
+.card-enter-active,
+.card-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+.card-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.card-leave-to {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(12px);
+}
+
+/* Élément dont la synchronisation serveur est en cours */
+.syncing {
+  opacity: 0.55;
+}
+
+/* ---------------------------------------------------------------------------
+   Transitions des modales (voir components/ui/AppModal.vue).
+   Fondu du fond + léger glissement du panneau ; désactivées si l'utilisateur
+   préfère réduire les animations.
+   --------------------------------------------------------------------------- */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.18s ease;
+}
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .modal-panel,
+.modal-leave-active .modal-panel {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.modal-enter-from .modal-panel,
+.modal-leave-to .modal-panel {
+  opacity: 0;
+  transform: translateY(10px) scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-enter-active,
+  .modal-leave-active,
+  .modal-enter-active .modal-panel,
+  .modal-leave-active .modal-panel {
+    transition: none;
+  }
+  .modal-enter-from .modal-panel,
+  .modal-leave-to .modal-panel {
+    transform: none;
+  }
+}

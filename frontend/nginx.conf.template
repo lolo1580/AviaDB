@@ -1,0 +1,42 @@
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # index.html ne doit jamais être mis en cache : il référence les assets
+    # versionnés (hash), donc un HTML périmé pointerait vers un ancien bundle.
+    location = /index.html {
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+        add_header Pragma "no-cache";
+    }
+
+    # Assets versionnés par leur hash : cache long et immuable.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
+    # URL du backend, injectée au démarrage du conteneur (envsubst).
+    # Réseau bridge : http://backend:8000 — réseau hôte : http://127.0.0.1:8000
+    location /api/ {
+        proxy_pass ${BACKEND_URL};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 20m;
+    }
+
+    # Images uploadées (servies par FastAPI)
+    location /uploads/ {
+        proxy_pass ${BACKEND_URL};
+        proxy_set_header Host $host;
+    }
+
+    # SPA : toute route inconnue retombe sur index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
