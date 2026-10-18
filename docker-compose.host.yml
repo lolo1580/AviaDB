@@ -1,0 +1,26 @@
+# Surcharge : déploiement en réseau HÔTE (les conteneurs partagent la pile réseau
+# de la machine, sans publication de ports).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
+#
+# Dans ce mode :
+#   - l'UI est servie sur http://<ip-hote>/         (port 80)
+#   - l'API est servie sur http://<ip-hote>:8000/  (port 8000, docs sur /docs)
+#   - PostgreSQL est joignable sur <ip-hote>:5434
+#   - Nginx et le backend joignent la base via 127.0.0.1:5434
+#
+# La base reste sur le réseau bridge de Compose (seul son port est publié) :
+# c'est le backend, en réseau hôte, qui la joint par 127.0.0.1. Les ports 80 et
+# 8000 doivent être libres sur l'hôte.
+services:
+  backend:
+    network_mode: host
+    environment:
+      DATABASE_URL: postgresql+psycopg://aviadb:${POSTGRES_PASSWORD:-change-me}@127.0.0.1:5434/aviadb
+    ports: !reset []
+
+  frontend:
+    network_mode: host
+    environment:
+      BACKEND_URL: http://127.0.0.1:8000
+    ports: !reset []

@@ -1,0 +1,2 @@
+# Ce dossier est monté dans le conteneur backend sur /app/data.
+# Il contiendra aviadb.db (base SQLite) et uploads/ (images normalisées en WebP).
