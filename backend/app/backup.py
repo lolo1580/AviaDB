@@ -41,6 +41,8 @@ _ITEM_LOADS = (
     selectinload(models.Item.patch),
     selectinload(models.Item.photos),
     selectinload(models.Item.tags),
+    selectinload(models.Item.links),
+    selectinload(models.Item.price_points),
 )
 
 
@@ -159,6 +161,25 @@ def _restore_item(db: Session, entry: dict) -> models.Item:
                 caption=photo.get("caption"),
                 position=int(photo.get("position", position)),
                 is_primary=bool(photo.get("is_primary")),
+            )
+        )
+
+    for link in entry.get("links") or []:
+        if isinstance(link, dict) and link.get("url"):
+            item.links.append(models.ItemLink(url=link["url"], label=link.get("label")))
+
+    for point in entry.get("price_points") or []:
+        if not isinstance(point, dict) or point.get("price") is None:
+            continue
+        recorded = point.get("recorded_on")
+        item.price_points.append(
+            models.PricePoint(
+                price=float(point["price"]),
+                currency=(point.get("currency") or item.currency or "EUR"),
+                eur_value=point.get("eur_value"),
+                recorded_on=date.fromisoformat(recorded) if recorded else date.today(),
+                source_url=point.get("source_url"),
+                note=point.get("note"),
             )
         )
     return item

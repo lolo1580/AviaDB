@@ -147,6 +147,14 @@ class Item(Base):
     )
     tags: Mapped[list[Tag]] = relationship(secondary=item_tags, back_populates="items")
     item_class: Mapped[ItemClass | None] = relationship(back_populates="items")
+    links: Mapped[list[ItemLink]] = relationship(
+        back_populates="item", cascade="all, delete-orphan", order_by="ItemLink.id"
+    )
+    price_points: Mapped[list[PricePoint]] = relationship(
+        back_populates="item",
+        cascade="all, delete-orphan",
+        order_by="(PricePoint.recorded_on, PricePoint.id)",
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - confort de debug
         return f"<Item id={self.id} name={self.name!r} type={self.item_type.value}>"
@@ -294,6 +302,42 @@ class User(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - confort de debug
         return f"<User id={self.id} username={self.username!r} role={self.role.value}>"
+
+
+# --------------------------------------------------------------------------- #
+# Liens externes (boutique, fiche technique, référence…)
+# --------------------------------------------------------------------------- #
+class ItemLink(Base):
+    __tablename__ = "item_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), index=True)
+    url: Mapped[str] = mapped_column(String(1024))
+    label: Mapped[str | None] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    item: Mapped[Item] = relationship(back_populates="links")
+
+
+# --------------------------------------------------------------------------- #
+# Relevés de prix (historique, pour suivre l'évolution d'une pièce)
+# --------------------------------------------------------------------------- #
+class PricePoint(Base):
+    __tablename__ = "price_points"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), index=True)
+    price: Mapped[float] = mapped_column(Float)
+    currency: Mapped[str] = mapped_column(String(3))
+    # Équivalent EUR figé au moment du relevé : permet de tracer une courbe
+    # cohérente même si les relevés ne sont pas dans la même devise.
+    eur_value: Mapped[float | None] = mapped_column(Float)
+    recorded_on: Mapped[date] = mapped_column(Date, index=True)
+    source_url: Mapped[str | None] = mapped_column(String(1024))
+    note: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    item: Mapped[Item] = relationship(back_populates="price_points")
 
 
 # --------------------------------------------------------------------------- #

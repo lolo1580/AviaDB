@@ -81,6 +81,55 @@ class PatchDetailsOut(ORMModel):
 # --------------------------------------------------------------------------- #
 # Photos & tags
 # --------------------------------------------------------------------------- #
+class LinkOut(ORMModel):
+    id: int
+    url: str
+    label: str | None = None
+    created_at: datetime
+
+
+class LinkIn(BaseModel):
+    url: str = Field(min_length=4, max_length=1024)
+    label: str | None = Field(None, max_length=120)
+
+
+class LinkUpdate(BaseModel):
+    url: str | None = Field(None, min_length=4, max_length=1024)
+    label: str | None = Field(None, max_length=120)
+
+
+class PricePointOut(ORMModel):
+    id: int
+    price: float
+    currency: str
+    eur_value: float | None = None
+    recorded_on: date
+    source_url: str | None = None
+    note: str | None = None
+    created_at: datetime
+
+
+class PricePointIn(BaseModel):
+    price: float = Field(gt=0, le=10_000_000)
+    currency: str | None = Field(None, min_length=3, max_length=3)
+    recorded_on: date | None = None
+    source_url: str | None = Field(None, max_length=1024)
+    note: str | None = Field(None, max_length=255)
+
+
+class FetchPriceIn(BaseModel):
+    url: str = Field(min_length=4, max_length=1024)
+
+
+class FetchPriceOut(BaseModel):
+    """Prix lu sur une page : proposé à l'utilisateur, jamais enregistré seul."""
+
+    price: float
+    currency: str | None = None
+    title: str | None = None
+    strategy: str
+
+
 class PhotoOut(ORMModel):
     id: int
     file_path: str
@@ -180,6 +229,8 @@ class ItemOut(ORMModel):
     patch: PatchDetailsOut | None = None
     photos: list[PhotoOut] = Field(default_factory=list)
     tags: list[TagOut] = Field(default_factory=list)
+    links: list[LinkOut] = Field(default_factory=list)
+    price_points: list[PricePointOut] = Field(default_factory=list)
 
 
 class ItemListOut(BaseModel):

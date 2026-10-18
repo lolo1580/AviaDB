@@ -7,6 +7,7 @@ import { confirm as askConfirm } from '../composables/useConfirm'
 import { useItemList } from '../composables/useItemList'
 import { formatMoney } from '../labels'
 import { settings, toBase } from '../settings'
+import { priceSummary } from '../prices'
 import ItemCard from '../components/ItemCard.vue'
 import ItemFormModal from '../components/ItemFormModal.vue'
 import ItemDetailDrawer from '../components/ItemDetailDrawer.vue'
@@ -148,6 +149,33 @@ async function markAcquired(item) {
         :class="isPending(`item:${item.id}`) ? 'syncing' : ''"
       >
         <ItemCard :item="item" @edit="openItem" />
+
+        <!-- Dernier relevé de prix et tendance -->
+        <p
+          v-if="priceSummary(item)"
+          class="flex flex-wrap items-center gap-x-2 text-xs text-slate-500 dark:text-slate-400"
+        >
+          <span>
+            Relevé du {{ priceSummary(item).date }} :
+            <strong class="font-semibold text-slate-700 dark:text-slate-200">{{ priceSummary(item).label }}</strong>
+          </span>
+          <span
+            v-if="priceSummary(item).trend"
+            class="font-semibold"
+            :class="{
+              'text-emerald-600 dark:text-emerald-400': priceSummary(item).trend === 'down',
+              'text-rose-600 dark:text-rose-400': priceSummary(item).trend === 'up',
+              'text-slate-400': priceSummary(item).trend === 'flat',
+            }"
+          >
+            {{ priceSummary(item).trend === 'down' ? '▼' : priceSummary(item).trend === 'up' ? '▲' : '=' }}
+            {{ Math.abs(priceSummary(item).variation).toFixed(0) }} %
+          </span>
+          <span v-if="item.links.length" class="text-slate-400 dark:text-slate-500">
+            · {{ item.links.length }} lien{{ item.links.length > 1 ? 's' : '' }}
+          </span>
+        </p>
+
         <button
           v-if="canWrite()"
           type="button"

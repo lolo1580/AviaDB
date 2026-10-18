@@ -61,9 +61,18 @@ export const api = {
   updateRates: (rates) => request('/api/admin/rates', { method: 'PUT', body: { rates } }),
   refreshRates: () => request('/api/admin/rates/refresh', { method: 'POST' }),
 
+  // Liens externes
+  addLink: (itemId, data) => request(`/api/items/${itemId}/links`, { method: 'POST', body: data }),
+  updateLink: (id, data) => request(`/api/links/${id}`, { method: 'PATCH', body: data }),
+  deleteLink: (id) => request(`/api/links/${id}`, { method: 'DELETE' }),
+
+  // Relevés de prix
+  addPrice: (itemId, data) => request(`/api/items/${itemId}/prices`, { method: 'POST', body: data }),
+  deletePrice: (id) => request(`/api/prices/${id}`, { method: 'DELETE' }),
+  fetchPrice: (url) => request('/api/admin/fetch-price', { method: 'POST', body: { url } }),
+
   // Classes (arborescence)
-  getClasses: () => request('/api/classes'),
-  createClass: (data) => request('/api/admin/classes', { method: 'POST', body: data }),
+  getClasses: () => request('/api/classes'),  createClass: (data) => request('/api/admin/classes', { method: 'POST', body: data }),
   updateClass: (id, data) => request(`/api/admin/classes/${id}`, { method: 'PATCH', body: data }),
   deleteClass: (id, force = false) =>
     request(`/api/admin/classes/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),

@@ -123,6 +123,7 @@ aviadb/
 │   │   ├── crud.py       # création d'items, tags, helpers de classes (partagé)
 │   │   ├── stats.py      # calcul des agrégats (interface + API publique)
 │   │   ├── api_keys.py   # clés d'API et route publique /api/public/stats
+│   │   ├── pricing.py    # lecture assistée d'un prix sur une page de boutique
 │   │   ├── currency.py   # devises, taux de change, conversions
 │   │   ├── media.py      # upload, conversion WebP, vignettes
 │   │   ├── auth.py       # comptes, rôles, jetons, require_admin
@@ -139,6 +140,7 @@ aviadb/
 │   │   ├── layout/       # navItems, icons (SVG inline), modalStack
 │   │   ├── components/
 │   │   │   ├── ui/       # AppModal, AppDrawer, AppButton, AppTabs, ConfirmDialog, PromptDialog
+│   │   │   └── PriceChart.vue  # courbe d'évolution d'un prix
 │   │   │   ├── layout/   # AppShell, AppSidebar, AppTopbar, notifications, avatar
 │   │   │   └── …         # LoginPanel, ThemeToggle, PhotoLightbox, StatsPanel, …
 │   │   ├── views/        # Collection, Souhaits, Statistiques, Admin
@@ -146,6 +148,7 @@ aviadb/
 │   │   ├── auth.js       # session et rôle
 │   │   ├── settings.js   # devise de référence et taux
 │   │   ├── classes.js    # arborescence des classes (arbre, chemins)
+│   │   ├── prices.js     # relevés de prix (série, variation, devise de référence)
 │   │   ├── optimistic.js # registre des opérations + helper optimiste
 │   │   ├── toast.js      # notifications (rollback, « Réessayer »)
 │   │   ├── notifications.js  # centre de notifications (cloche)
@@ -174,6 +177,8 @@ via des tables d'attributs spécifiques :
    ├── [diecast_details]   1-to-1 optionnel
    ├── [patch_details]     1-to-1 optionnel
    ├── [item_photos]       1-to-N
+   ├── [item_links]        1-to-N (boutiques, fiches, références)
+   ├── [price_points]      1-to-N (historique du prix)
    ├── [classes]           N-to-1 (arborescente : classe → sous-classe)
    └── [tags]              N-to-N (via item_tags)
 ```
@@ -242,6 +247,12 @@ FastAPI expose aussi ses propres pages sur le port 8000 : `/docs` (Swagger UI) e
 | GET | `/api/meta/enums` | valeurs d'énumération |
 | GET | `/api/tags` | vocabulaire de tags |
 | GET | `/api/classes` | arborescence des classes (liste plate + `parent_id`) |
+| POST | `/api/items/{item_id}/links` | ajouter un lien externe *(ADMIN)* |
+| PATCH | `/api/links/{link_id}` | modifier un lien *(ADMIN)* |
+| DELETE | `/api/links/{link_id}` | supprimer un lien *(ADMIN)* |
+| POST | `/api/items/{item_id}/prices` | enregistrer un relevé de prix *(ADMIN)* |
+| DELETE | `/api/prices/{price_id}` | supprimer un relevé *(ADMIN)* |
+| POST | `/api/admin/fetch-price` | lire un prix sur une page (proposé, non enregistré) *(ADMIN)* |
 | POST | `/api/admin/classes` | créer une classe ou une sous-classe *(ADMIN)* |
 | PATCH | `/api/admin/classes/{class_id}` | renommer / déplacer une classe *(ADMIN)* |
 | DELETE | `/api/admin/classes/{class_id}` | supprimer la classe et sa descendance (`?force=true` si utilisée) *(ADMIN)* |
@@ -410,6 +421,34 @@ curl -H "X-API-Key: aviadb_…" https://<hote>/api/public/stats
 - désactivation et révocation immédiates ; nombre d'appels et date du dernier appel
   sont affichés ;
 - les autres routes restent fermées : sans clé, `/api/public/stats` répond `401`.
+
+## Liens et suivi du prix
+
+Dans le panneau latéral de n'importe quel objet (pas seulement les souhaits) :
+
+**Liens** — plusieurs adresses par objet, avec un libellé facultatif (boutique,
+fiche technique, référence). Ils s'ouvrent dans un nouvel onglet.
+
+**Relevés de prix** — pour chaque observation, la date, le montant, la devise et
+une note. La courbe d'évolution s'affiche juste au-dessus, exprimée dans la devise
+de référence : chaque relevé conserve son **équivalent EUR figé au jour de
+l'enregistrement**, la courbe reste donc lisible même si les relevés ont été faits
+dans plusieurs devises. Les cartes de la liste de souhaits affichent le dernier
+relevé et la variation (« 68,00 € ▼ 9 % »).
+
+**Récupération assistée** — le bouton « Récupérer le prix » lit la page du lien et
+**pré-remplit** le formulaire ; rien n'est enregistré sans votre validation. Trois
+stratégies sont tentées, de la plus fiable à la plus approximative : **JSON-LD**
+(`price` / `priceCurrency`), **métadonnées** Open Graph et microdonnées, puis un
+**motif générique** autour d'un symbole monétaire. Le message indique laquelle a
+abouti, ou pourquoi rien n'a été trouvé.
+
+> Sécurité : seules les adresses `http(s)` **publiques** sont acceptées — une URL
+> pointant vers le réseau local est refusée, pour que cette fonction ne serve pas
+> de sonde. Téléchargement borné (`PRICE_FETCH_MAX_BYTES`) et délai limité
+> (`PRICE_FETCH_TIMEOUT`).
+
+Liens et relevés sont inclus dans la **sauvegarde ZIP** et restaurés avec l'objet.
 
 ## Autres écrans
 
@@ -588,6 +627,8 @@ documentation fonctionnent avec les en-têtes en place.
 | `MAX_BACKUP_BYTES` | `268435456` | taille max d'une archive de restauration (256 Mo) |
 | `MAX_BACKUP_UNCOMPRESSED` | `1073741824` | volume décompressé max (1 Go) |
 | `PUBLIC_RATE_LIMIT` | `60` | appels autorisés par clé d'API et par fenêtre |
+| `PRICE_FETCH_TIMEOUT` | `8` | délai max pour lire un prix (secondes) |
+| `PRICE_FETCH_MAX_BYTES` | `2097152` | taille max de la page lue (2 Mo) |
 | `BACKEND_URL` | `http://backend:8000` | URL du backend utilisée par Nginx (frontend) |
 | `PUBLIC_RATE_WINDOW` | `60` | durée de la fenêtre de limitation (secondes) |
 | `RATES_API_URL` | `https://api.frankfurter.dev/v1` | fournisseur de taux de change |
@@ -627,10 +668,11 @@ pytest                     # utilise par défaut la base ci-dessus
 DATABASE_URL=postgresql+psycopg://aviadb:test@localhost:5432/aviadb_test pytest
 ```
 
-La suite (`backend/tests/`, **81 tests**) couvre le CRUD, la validation (dont les
+La suite (`backend/tests/`, **104 tests**) couvre le CRUD, la validation (dont les
 dates invalides), la cascade, l'upload WebP et les vignettes, l'ordre des photos,
 les filtres (y compris par classe et sa descendance), les statistiques et les
-graphiques, les devises et taux de change, les classes hiérarchiques,
+graphiques, les devises et taux de change, les classes hiérarchiques, les liens externes et
+le suivi du prix (dont la lecture assistée et le refus des adresses internes),
 l'authentification et les rôles, les clés d'API et la route publique, les actions
 en masse, l'import/export JSON et CSV, la sauvegarde/restauration (objets, réglages
 et comptes) et le mode sans protection. **Aucun test ne fait d'appel réseau** : le

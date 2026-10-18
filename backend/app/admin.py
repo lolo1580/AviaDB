@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import api_keys, auth, backup, crud, currency, media, models, schemas
+from . import api_keys, auth, backup, crud, currency, media, models, pricing, schemas
 from .database import get_db
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -394,6 +394,19 @@ def _admin_count(db: Session, *, exclude_id: int | None = None) -> int:
     if exclude_id is not None:
         statement = statement.where(models.User.id != exclude_id)
     return db.scalar(statement) or 0
+
+
+@router.post(
+    "/fetch-price",
+    response_model=schemas.FetchPriceOut,
+    dependencies=[Depends(auth.require_admin)],
+)
+def fetch_price(payload: schemas.FetchPriceIn):
+    """Lit un prix sur une page de boutique — proposé, jamais enregistré seul."""
+    try:
+        return schemas.FetchPriceOut(**pricing.fetch_price(payload.url))
+    except pricing.PriceFetchError as exc:
+        raise HTTPException(422, str(exc))
 
 
 @router.get(

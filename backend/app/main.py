@@ -9,6 +9,7 @@ leur upload arrivera à l'étape 2.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import date
 from typing import Literal
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
@@ -32,6 +33,8 @@ _ITEM_LOADS = (
     selectinload(models.Item.patch),
     selectinload(models.Item.photos),
     selectinload(models.Item.tags),
+    selectinload(models.Item.links),
+    selectinload(models.Item.price_points),
 )
 
 
@@ -613,6 +616,119 @@ def facets(db: Session = Depends(get_db)):
         manufacturers=distinct(models.DiecastDetails.manufacturer),
         tags=list(db.scalars(select(models.Tag.name).order_by(models.Tag.name)).all()),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Liens et suivi du prix (Étape 5)
+# --------------------------------------------------------------------------- #
+def _valid_url(raw: str) -> str:
+    url = (raw or "").strip()
+    if not url.lower().startswith(("http://", "https://")):
+        url = f"https://{url}"
+    if len(url) > 1024:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Adresse trop longue")
+    return url
+
+
+@app.post(
+    "/api/items/{item_id}/links",
+    response_model=schemas.LinkOut,
+    status_code=status.HTTP_201_CREATED,
+    tags=["links"],
+    dependencies=_admin_only,
+)
+def add_link(item_id: int, payload: schemas.LinkIn, db: Session = Depends(get_db)):
+    item = _load_item(db, item_id)
+    link = models.ItemLink(
+        item=item, url=_valid_url(payload.url), label=(payload.label or "").strip() or None
+    )
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    return link
+
+
+@app.patch(
+    "/api/links/{link_id}",
+    response_model=schemas.LinkOut,
+    tags=["links"],
+    dependencies=_admin_only,
+)
+def update_link(link_id: int, payload: schemas.LinkUpdate, db: Session = Depends(get_db)):
+    link = db.get(models.ItemLink, link_id)
+    if link is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Lien {link_id} introuvable")
+
+    fields = payload.model_dump(exclude_unset=True)
+    if fields.get("url"):
+        link.url = _valid_url(fields["url"])
+    if "label" in fields:
+        link.label = (fields["label"] or "").strip() or None
+    db.commit()
+    db.refresh(link)
+    return link
+
+
+@app.delete(
+    "/api/links/{link_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["links"],
+    dependencies=_admin_only,
+)
+def delete_link(link_id: int, db: Session = Depends(get_db)):
+    link = db.get(models.ItemLink, link_id)
+    if link is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Lien {link_id} introuvable")
+    db.delete(link)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post(
+    "/api/items/{item_id}/prices",
+    response_model=schemas.PricePointOut,
+    status_code=status.HTTP_201_CREATED,
+    tags=["prices"],
+    dependencies=_admin_only,
+)
+def add_price_point(
+    item_id: int, payload: schemas.PricePointIn, db: Session = Depends(get_db)
+):
+    """Enregistre un relevé de prix. L'équivalent EUR est figé au taux du jour."""
+    item = _load_item(db, item_id)
+    code = (payload.currency or item.currency or currency.get_base_currency(db)).upper()
+    if code not in currency.CURRENCIES:
+        code = currency.get_base_currency(db)
+    rates = currency.get_rates(db)
+
+    point = models.PricePoint(
+        item=item,
+        price=payload.price,
+        currency=code,
+        eur_value=round(currency.to_eur(payload.price, code, rates), 4),
+        recorded_on=payload.recorded_on or date.today(),
+        source_url=payload.source_url,
+        note=payload.note,
+    )
+    db.add(point)
+    db.commit()
+    db.refresh(point)
+    return point
+
+
+@app.delete(
+    "/api/prices/{price_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["prices"],
+    dependencies=_admin_only,
+)
+def delete_price_point(price_id: int, db: Session = Depends(get_db)):
+    point = db.get(models.PricePoint, price_id)
+    if point is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Relevé {price_id} introuvable")
+    db.delete(point)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # --------------------------------------------------------------------------- #
