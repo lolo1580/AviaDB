@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { api, backupUrl, exportCsvUrl, photoUrl } from '../api'
+import { api, backupUrl, exportCsvUrl, photoUrl, reportUrl } from '../api'
 import { auth, canWrite, isAdmin, refreshSession } from '../auth'
 import { ui, setAdminTab } from '../ui'
 import { STATUS_LABEL, TYPE_LABEL, formatMoney } from '../labels'
@@ -54,6 +54,7 @@ const tabs = computed(() =>
     { id: 'currencies', label: 'Devises & taux', icon: 'charts', badge: Object.keys(settings.rates || {}).length },
     isAdmin() ? { id: 'users', label: 'Comptes', icon: 'user', badge: users.value.length } : null,
     isAdmin() ? { id: 'api', label: 'API', icon: 'external', badge: apiKeys.value.length } : null,
+    isAdmin() ? { id: 'journal', label: 'Journal', icon: 'alert', badge: activity.value.length } : null,
     { id: 'backup', label: 'Sauvegarde', icon: 'external', badge: null },
   ].filter(Boolean),
 )
@@ -94,15 +95,19 @@ async function loadUsage() {
 const newRootClass = ref('')
 const classRows = computed(() => flattenedClasses())
 
-async function addClass(parentId = null, label = 'Ajouter une classe racine') {
+async function addClass(parentId = null, presetName = null) {
   const parent = parentId ? classes.list.find((node) => node.id === parentId) : null
-  const name = await askPrompt({
-    title: parent ? `Nouvelle sous-classe de « ${parent.name} »` : 'Nouvelle classe racine',
-    label: 'Nom de la classe',
-    placeholder: 'Aéronefs, Chasseur, Transport…',
-    maxLength: 80,
-    confirmLabel: 'Créer',
-  })
+  // Un nom peut être fourni directement (champ « nouvelle classe racine »),
+  // sinon on le demande par une invite.
+  const name =
+    presetName ??
+    (await askPrompt({
+      title: parent ? `Nouvelle sous-classe de « ${parent.name} »` : 'Nouvelle classe racine',
+      label: 'Nom de la classe',
+      placeholder: 'Aéronefs, Chasseur, Transport…',
+      maxLength: 80,
+      confirmLabel: 'Créer',
+    }))
   if (name === null || !name.trim()) return
   try {
     await api.createClass({ name: name.trim(), parent_id: parentId })
@@ -111,6 +116,14 @@ async function addClass(parentId = null, label = 'Ajouter une classe racine') {
   } catch (e) {
     error.value = e.message
   }
+}
+
+/** Ajoute la classe racine saisie dans le champ dédié. */
+function submitRootClass() {
+  const name = newRootClass.value.trim()
+  if (!name) return
+  newRootClass.value = ''
+  addClass(null, name)
 }
 
 async function renameClass(node) {
@@ -262,8 +275,11 @@ async function load() {
 
 onMounted(async () => {
   if (!auth.checked) await refreshSession()
+  // Un compte lecteur ne doit pas rester sur un onglet réservé aux administrateurs
+  // (onglet mémorisé d'une session précédente) : la page serait vide.
+  if (!isAdmin() && ['users', 'api', 'journal'].includes(ui.adminTab)) setAdminTab('items')
   await load()
-  await Promise.all([loadUsers(), loadUsage(), loadClasses(), loadApiKeys()])
+  await Promise.all([loadUsers(), loadUsage(), loadClasses(), loadApiKeys(), loadActivity()])
 })
 
 function specific(item) {
@@ -440,6 +456,21 @@ async function loadUsers() {
   }
   try {
     users.value = await api.listUsers()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+// --- Journal d'activité (audit) ---
+const activity = ref([])
+
+async function loadActivity() {
+  if (!isAdmin()) {
+    activity.value = []
+    return
+  }
+  try {
+    activity.value = await api.listActivity(200)
   } catch (e) {
     error.value = e.message
   }
@@ -1071,13 +1102,13 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
             v-model="newRootClass"
             placeholder="Nouvelle classe racine…"
             class="w-56 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
-            @keyup.enter="newRootClass.trim() && (addClass(null, newRootClass), (newRootClass = ''))"
+            @keyup.enter="submitRootClass"
           />
           <button
             type="button"
             :class="btnPrimary"
             :disabled="!newRootClass.trim()"
-            @click="addClass(null); newRootClass = ''"
+            @click="submitRootClass"
           >
             Ajouter
           </button>
@@ -1329,6 +1360,67 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
         </form>
     </section>
 
+    <!-- ============================= Onglet « Journal » ============================= -->
+    <section
+      v-else-if="ui.adminTab === 'journal' && isAdmin()"
+      id="panel-journal"
+      role="tabpanel"
+      aria-labelledby="tab-journal"
+      class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">
+          Journal d’activité
+        </h3>
+        <button type="button" :class="btn" @click="loadActivity">Rafraîchir</button>
+      </div>
+      <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+        Les {{ activity.length }} dernières modifications : qui a modifié quoi, et quand.
+      </p>
+
+      <div v-if="activity.length" class="mt-3 overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
+          <thead class="bg-slate-50 dark:bg-slate-800/60">
+            <tr class="text-left text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              <th :class="cell">Date</th>
+              <th :class="cell">Compte</th>
+              <th :class="cell">Méthode</th>
+              <th :class="cell">Requête</th>
+              <th :class="cell">Code</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+            <tr
+              v-for="entry in activity"
+              :key="entry.id"
+              class="hover:bg-slate-50 dark:hover:bg-slate-800/50"
+            >
+              <td :class="cell">{{ new Date(entry.at).toLocaleString('fr-FR') }}</td>
+              <td :class="[cell, 'font-medium text-slate-900 dark:text-slate-100']">
+                {{ entry.username || '—' }}
+              </td>
+              <td :class="cell">{{ entry.method }}</td>
+              <td :class="[cell, 'font-mono text-xs']">{{ entry.path }}</td>
+              <td :class="cell">
+                <span
+                  :class="
+                    entry.status_code < 400
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-rose-600 dark:text-rose-400'
+                  "
+                >
+                  {{ entry.status_code }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else class="mt-3 text-sm text-slate-400 dark:text-slate-500">
+        Aucune activité enregistrée.
+      </p>
+    </section>
+
     <!-- ============================= Onglet « Sauvegarde » ============================= -->
     <section
       v-else-if="ui.adminTab === 'backup'"
@@ -1363,6 +1455,21 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
           Pour une sauvegarde au niveau du moteur (restauration par <code>psql</code>) :
         </p>
         <pre class="mt-2 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-100"><code>docker exec aviadb-db pg_dump -U aviadb aviadb | gzip &gt; aviadb-pg.sql.gz</code></pre>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">
+          Inventaire et étiquettes
+        </h3>
+        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          Le rapport d’inventaire récapitule les totaux et la liste des objets — utile pour une
+          déclaration d’assurance. Les étiquettes portent un QR code qui rouvre la fiche de
+          l’objet.
+        </p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <a :href="reportUrl()" :class="btnPrimary" download>Rapport PDF</a>
+          <a href="/etiquettes" :class="btn">Étiquettes à imprimer</a>
+        </div>
       </div>
 
       <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">

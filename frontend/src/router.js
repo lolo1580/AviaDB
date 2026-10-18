@@ -1,8 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import CollectionView from './views/CollectionView.vue'
-import AdminView from './views/AdminView.vue'
-import ChartsView from './views/ChartsView.vue'
-import WishlistView from './views/WishlistView.vue'
+
+// Les vues lourdes (Chart.js, qrcode, administration) sont chargées à la
+// demande : seule la collection reste dans le paquet initial.
+const WishlistView = () => import('./views/WishlistView.vue')
+const ChartsView = () => import('./views/ChartsView.vue')
+const LabelsView = () => import('./views/LabelsView.vue')
+const AdminView = () => import('./views/AdminView.vue')
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -24,6 +28,12 @@ export const router = createRouter({
       name: 'charts',
       component: ChartsView,
       meta: { title: 'Statistiques', subtitle: 'Répartition de la collection' },
+    },
+    {
+      path: '/etiquettes',
+      name: 'labels',
+      component: LabelsView,
+      meta: { title: 'Étiquettes', subtitle: 'QR codes de rangement à imprimer' },
     },
     {
       path: '/admin',

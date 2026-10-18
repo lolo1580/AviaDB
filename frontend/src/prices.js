@@ -56,10 +56,33 @@ export function priceSummary(item) {
 }
 
 /** Série pour le graphique : { label, value } dans la devise de référence. */
-export function chartSeries(item, separator = ' › ') {
+export function chartSeries(item) {
   const base = settings.default_currency
   return pricePoints(item)
     .map((point) => ({ label: point.recorded_on, value: valueInBase(point) }))
     .filter((entry) => entry.value !== null && entry.value !== undefined)
     .map((entry) => ({ ...entry, currency: base }))
+}
+
+/**
+ * Alerte de budget d'une pièce recherchée : le dernier relevé est-il au niveau
+ * ou en dessous du budget visé (`estimated_value`) ? Renvoie null sinon.
+ *
+ * Les deux montants sont ramenés dans la devise de référence avant comparaison.
+ */
+export function budgetAlert(item) {
+  const target = toBase(item?.estimated_value, item?.currency)
+  const last = latestPrice(item)
+  if (target == null || target <= 0 || !last) return null
+
+  const price = valueInBase(last)
+  if (price == null || price > target) return null
+
+  return {
+    target,
+    price,
+    saving: target - price,
+    percent: ((target - price) / target) * 100,
+    date: last.recorded_on,
+  }
 }

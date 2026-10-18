@@ -7,7 +7,8 @@ import { confirm as askConfirm } from '../composables/useConfirm'
 import { useItemList } from '../composables/useItemList'
 import { formatMoney } from '../labels'
 import { settings, toBase } from '../settings'
-import { priceSummary } from '../prices'
+import { budgetAlert, priceSummary } from '../prices'
+import { pushNotification } from '../notifications'
 import ItemCard from '../components/ItemCard.vue'
 import ItemFormModal from '../components/ItemFormModal.vue'
 import ItemDetailDrawer from '../components/ItemDetailDrawer.vue'
@@ -24,8 +25,50 @@ const budget = computed(() =>
   items.value.reduce((acc, item) => acc + (toBase(item.estimated_value, item.currency) || 0), 0),
 )
 
+/** Pièces dont le dernier relevé est au niveau ou en dessous du budget visé. */
+const alerts = computed(() => items.value.filter((item) => budgetAlert(item)))
+
+// On ne signale une alerte qu'une fois par objet et par relevé, pour ne pas
+// inonder le centre de notifications à chaque visite.
+const ALERT_STORAGE_KEY = 'aviadb-budget-alerts'
+
+function readNotified() {
+  try {
+    return JSON.parse(localStorage.getItem(ALERT_STORAGE_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function notifyBudgetAlerts() {
+  const seen = readNotified()
+  let changed = false
+  for (const item of items.value) {
+    const alert = budgetAlert(item)
+    if (!alert) continue
+    const signature = `${alert.date}:${alert.price.toFixed(2)}`
+    if (seen[item.id] === signature) continue
+    seen[item.id] = signature
+    changed = true
+    pushNotification({
+      type: 'info',
+      message:
+        `« ${item.name} » passe sous le budget visé : ` +
+        `${formatMoney(alert.price, settings.default_currency)} ` +
+        `(budget ${formatMoney(alert.target, settings.default_currency)}).`,
+    })
+  }
+  if (!changed) return
+  try {
+    localStorage.setItem(ALERT_STORAGE_KEY, JSON.stringify(seen))
+  } catch {
+    /* stockage indisponible : l'alerte sera simplement répétée */
+  }
+}
+
 async function load() {
   await list.load(filters)
+  notifyBudgetAlerts()
   if (!enums.value) {
     try {
       enums.value = await api.getEnums()
@@ -117,6 +160,9 @@ async function markAcquired(item) {
         <p class="text-sm text-slate-500 dark:text-slate-400">
           {{ total }} pièce(s) recherchée(s) — budget estimé
           {{ formatMoney(budget, settings.default_currency) }}
+          <span v-if="alerts.length" class="font-medium text-emerald-700 dark:text-emerald-400">
+            · {{ alerts.length }} sous le budget visé
+          </span>
         </p>
       </div>
       <button
@@ -174,6 +220,16 @@ async function markAcquired(item) {
           <span v-if="item.links.length" class="text-slate-400 dark:text-slate-500">
             · {{ item.links.length }} lien{{ item.links.length > 1 ? 's' : '' }}
           </span>
+        </p>
+
+        <!-- Alerte de budget : le dernier relevé est sous le budget visé -->
+        <p
+          v-if="budgetAlert(item)"
+          class="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-950/50 dark:text-emerald-300 dark:ring-emerald-400/30"
+        >
+          Sous le budget visé —
+          {{ formatMoney(budgetAlert(item).saving, settings.default_currency) }} d’économie
+          ({{ budgetAlert(item).percent.toFixed(0) }} %)
         </p>
 
         <button

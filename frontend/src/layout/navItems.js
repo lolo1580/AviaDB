@@ -8,6 +8,7 @@ export const navItems = [
   { name: 'collection', to: '/', icon: 'collection', label: 'Collection', title: 'Collection' },
   { name: 'wishlist', to: '/souhaits', icon: 'wishlist', label: 'Souhaits', title: 'Liste de souhaits' },
   { name: 'charts', to: '/statistiques', icon: 'charts', label: 'Statistiques', title: 'Statistiques' },
+  { name: 'labels', to: '/etiquettes', icon: 'labels', label: 'Étiquettes', title: 'Étiquettes' },
   { name: 'admin', to: '/admin', icon: 'admin', label: 'Administration', title: 'Administration' },
 ]
 

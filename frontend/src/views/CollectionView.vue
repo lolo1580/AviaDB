@@ -1,5 +1,6 @@
 <script setup>
 import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { api } from '../api'
 import { canWrite } from '../auth'
 import { ui, setViewMode } from '../ui'
@@ -13,6 +14,8 @@ import ItemListRow from '../components/ItemListRow.vue'
 import ViewToggle from '../components/ViewToggle.vue'
 import ItemFormModal from '../components/ItemFormModal.vue'
 import ItemDetailDrawer from '../components/ItemDetailDrawer.vue'
+
+const route = useRoute()
 
 const stats = ref(null)
 const enums = ref(null)
@@ -54,7 +57,21 @@ onMounted(() => {
   list.load({ ...filters })
   loadMeta()
   loadStats()
+  openFromQuery()
 })
+
+// Lien profond : un QR code d'étiquette pointe sur `/?item=<id>` et doit
+// ouvrir directement la fiche de l'objet.
+async function openFromQuery() {
+  const raw = route.query.item
+  const id = Array.isArray(raw) ? raw[0] : raw
+  if (!id) return
+  try {
+    detail.value = await api.getItem(Number(id))
+  } catch {
+    /* objet introuvable (supprimé, lien obsolète) : on ignore */
+  }
+}
 
 let debounce
 watch(

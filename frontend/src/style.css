@@ -142,3 +142,24 @@ html.dark {
     transform: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Impression — étiquettes de rangement (voir views/LabelsView.vue).
+   La barre latérale, l'en-tête et la barre d'outils portent `print:hidden`.
+   --------------------------------------------------------------------------- */
+@media print {
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  .label-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border-color: #cbd5e1;
+  }
+}

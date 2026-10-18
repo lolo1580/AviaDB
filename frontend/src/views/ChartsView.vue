@@ -24,6 +24,9 @@ const scaleCanvas = ref(null)
 const materialCanvas = ref(null)
 const yearCanvas = ref(null)
 const valueCanvas = ref(null)
+const classCanvas = ref(null)
+const locationCanvas = ref(null)
+const acquisitionCanvas = ref(null)
 
 let instances = []
 
@@ -118,6 +121,23 @@ async function build() {
     s.value_by_country.slice(0, 10).map((b) => b.value),
     valueCanvas.value,
     true,
+  )
+  bar(
+    (s.value_by_class || []).slice(0, 10).map((b) => b.key),
+    (s.value_by_class || []).slice(0, 10).map((b) => b.value),
+    classCanvas.value,
+    true,
+  )
+  bar(
+    (s.value_by_location || []).slice(0, 10).map((b) => b.key),
+    (s.value_by_location || []).slice(0, 10).map((b) => b.value),
+    locationCanvas.value,
+    true,
+  )
+  bar(
+    (s.value_by_year || []).map((b) => b.key),
+    (s.value_by_year || []).map((b) => b.value),
+    acquisitionCanvas.value,
   )
 
   mount(yearCanvas.value, {
@@ -230,8 +250,69 @@ const titleClass = 'text-sm font-semibold text-slate-800 dark:text-slate-200'
           <div class="mt-3 h-64"><canvas ref="valueCanvas" /></div>
         </section>
         <section :class="cardClass">
+          <h3 :class="titleClass">Valeur par classe (en {{ base }})</h3>
+          <div class="mt-3 h-64"><canvas ref="classCanvas" /></div>
+        </section>
+        <section :class="cardClass">
+          <h3 :class="titleClass">Valeur par emplacement (en {{ base }})</h3>
+          <div class="mt-3 h-64"><canvas ref="locationCanvas" /></div>
+        </section>
+        <section :class="cardClass">
           <h3 :class="titleClass">Acquisitions par année</h3>
           <div class="mt-3 h-64"><canvas ref="yearCanvas" /></div>
+        </section>
+        <section :class="cardClass">
+          <h3 :class="titleClass">Valeur d’acquisition par année (en {{ base }})</h3>
+          <div class="mt-3 h-64"><canvas ref="acquisitionCanvas" /></div>
+        </section>
+        <section v-if="stats.top_gains.length || stats.top_losses.length" :class="cardClass">
+          <h3 :class="titleClass">Plus-values et moins-values</h3>
+          <div class="mt-3 grid gap-4 sm:grid-cols-2">
+            <div>
+              <p class="text-xs font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                Meilleures plus-values
+              </p>
+              <ul class="mt-2 space-y-1 text-sm">
+                <li
+                  v-for="row in stats.top_gains"
+                  :key="row.id"
+                  class="flex items-center justify-between gap-3"
+                >
+                  <span class="truncate text-slate-700 dark:text-slate-200" :title="row.name">
+                    {{ row.name }}
+                  </span>
+                  <span class="shrink-0 font-medium text-emerald-600 dark:text-emerald-400">
+                    {{ formatMoney(row.gain, base) }}
+                  </span>
+                </li>
+                <li v-if="!stats.top_gains.length" class="text-slate-400 dark:text-slate-500">
+                  Aucune
+                </li>
+              </ul>
+            </div>
+            <div>
+              <p class="text-xs font-medium uppercase tracking-wide text-rose-600 dark:text-rose-400">
+                Moins-values
+              </p>
+              <ul class="mt-2 space-y-1 text-sm">
+                <li
+                  v-for="row in stats.top_losses"
+                  :key="row.id"
+                  class="flex items-center justify-between gap-3"
+                >
+                  <span class="truncate text-slate-700 dark:text-slate-200" :title="row.name">
+                    {{ row.name }}
+                  </span>
+                  <span class="shrink-0 font-medium text-rose-600 dark:text-rose-400">
+                    {{ formatMoney(row.gain, base) }}
+                  </span>
+                </li>
+                <li v-if="!stats.top_losses.length" class="text-slate-400 dark:text-slate-500">
+                  Aucune
+                </li>
+              </ul>
+            </div>
+          </div>
         </section>
         <section :class="cardClass">
           <h3 :class="titleClass">Par échelle</h3>

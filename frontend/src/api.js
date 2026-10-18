@@ -103,6 +103,7 @@ export const api = {
 
   // Administration
   bulk: (payload) => request('/api/admin/bulk', { method: 'POST', body: payload }),
+  listActivity: (limit = 100) => request(`/api/admin/activity?limit=${limit}`),
   exportItems: () => request('/api/admin/export'),
   importItems: (items) => request('/api/admin/import', { method: 'POST', body: items }),
   importCsv: (file) => {
@@ -135,6 +136,12 @@ export const exportCsvUrl = () => `${API_BASE}/api/admin/export.csv`
 
 /** URL de la sauvegarde ZIP (base + images). */
 export const backupUrl = () => `${API_BASE}/api/admin/backup`
+
+/** URL du rapport d'inventaire PDF (totaux + liste des objets). */
+export const reportUrl = () => `${API_BASE}/api/admin/report.pdf`
+
+/** URL de la fiche détaillée PDF d'un objet. */
+export const itemReportUrl = (id) => `${API_BASE}/api/items/${id}/report.pdf`
 
 export const photoUrl = (path) => (path ? `${API_BASE}/uploads/${path}` : '')
 

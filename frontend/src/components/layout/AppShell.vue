@@ -14,8 +14,8 @@ watch(
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-slate-100 dark:bg-slate-950">
-    <AppSidebar />
+  <div class="flex min-h-screen bg-slate-100 dark:bg-slate-950 print:block print:bg-white">
+    <AppSidebar class="print:hidden" />
 
     <!-- Voile du tiroir mobile -->
     <Transition
@@ -26,18 +26,18 @@ watch(
     >
       <div
         v-if="ui.mobileOpen"
-        class="fixed inset-0 z-30 bg-slate-900/50 lg:hidden"
+        class="fixed inset-0 z-30 bg-slate-900/50 lg:hidden print:hidden"
         aria-hidden="true"
         @click="closeMobileSidebar"
       />
     </Transition>
 
     <div class="flex min-w-0 flex-1 flex-col">
-      <AppTopbar />
-      <main class="mx-auto w-full flex-1 px-4 py-6 sm:px-6 lg:px-8">
+      <AppTopbar class="print:hidden" />
+      <main class="mx-auto w-full flex-1 px-4 py-6 sm:px-6 lg:px-8 print:max-w-none print:p-0">
         <slot />
       </main>
-      <footer class="px-4 pb-4 text-center text-xs text-slate-400 lg:hidden dark:text-slate-600">
+      <footer class="px-4 pb-4 text-center text-xs text-slate-400 lg:hidden dark:text-slate-600 print:hidden">
         AviaDB · build {{ __BUILD_STAMP__ }}
       </footer>
     </div>

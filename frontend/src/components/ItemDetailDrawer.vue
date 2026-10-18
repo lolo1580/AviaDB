@@ -6,8 +6,8 @@
  * Ouvre en lecture seule pour tout le monde ; le bouton « Modifier » n'apparaît
  * que pour les administrateurs.
  */
-import { computed, reactive, ref, watch } from 'vue'
-import { api, photoUrl } from '../api'
+import { computed, defineAsyncComponent, reactive, ref, watch } from 'vue'
+import { api, itemReportUrl, photoUrl } from '../api'
 import {
   ATTACHMENT_LABEL,
   MATERIAL_LABEL,
@@ -23,7 +23,8 @@ import { classPath } from '../classes'
 import { chartSeries, priceSummary } from '../prices'
 import { optimistic, tempId, isPending } from '../optimistic'
 import { toast } from '../toast'
-import PriceChart from './PriceChart.vue'
+// Chart.js est lourd : la courbe n'est chargée qu'à l'ouverture d'une fiche.
+const PriceChart = defineAsyncComponent(() => import('./PriceChart.vue'))
 import AppDrawer from './ui/AppDrawer.vue'
 import AppButton from './ui/AppButton.vue'
 import PhotoLightbox from './PhotoLightbox.vue'
@@ -33,7 +34,7 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   canEdit: { type: Boolean, default: false },
 })
-const emit = defineEmits(['close', 'edit'])
+defineEmits(['close', 'edit'])
 
 const lightboxIndex = ref(null)
 const error = ref('')
@@ -141,7 +142,6 @@ const history = computed(() => {
 const cell = 'text-sm'
 const inputClass =
   'w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm shadow-sm outline-none focus:border-sky-500 dark:border-slate-700'
-const linkAction = 'text-xs text-slate-400 transition hover:text-slate-600 dark:hover:text-slate-200'
 const linkDanger = 'text-xs text-rose-500 transition hover:text-rose-700 dark:hover:text-rose-400'
 
 function hostOf(url) {
@@ -152,8 +152,8 @@ function hostOf(url) {
   }
 }
 
-/* eslint-disable no-param-reassign -- la liste appartient au parent, on la met
-   à jour localement puis on restaure en cas d'échec (comme pour les photos). */
+// La liste des liens appartient au parent : on la met à jour localement puis on
+// restaure en cas d'échec (comme pour les photos).
 
 async function addLink() {
   const url = linkDraft.url.trim()
@@ -281,8 +281,6 @@ async function recoverPrice(link) {
     fetchState.value = { busy: false, message: e.message }
   }
 }
-
-/* eslint-enable no-param-reassign */
 </script>
 
 <template>
@@ -534,6 +532,14 @@ async function recoverPrice(link) {
     </div>
 
     <template #footer>
+      <a
+        v-if="item && typeof item.id === 'number'"
+        :href="itemReportUrl(item.id)"
+        class="mr-auto text-sm font-medium text-sky-600 hover:underline dark:text-sky-400"
+        download
+      >
+        Fiche PDF
+      </a>
       <AppButton variant="secondary" @click="$emit('close')">Fermer</AppButton>
       <AppButton v-if="canEdit" variant="primary" @click="$emit('edit', item)">Modifier</AppButton>
     </template>

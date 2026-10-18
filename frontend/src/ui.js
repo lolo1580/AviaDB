@@ -4,7 +4,7 @@ import { reactive } from 'vue'
 // mode d'affichage des listes et onglet d'administration courant.
 const STORAGE_KEY = 'aviadb-ui'
 
-export const ADMIN_TABS = ['items', 'tags', 'classes', 'currencies', 'users', 'api', 'backup']
+export const ADMIN_TABS = ['items', 'tags', 'classes', 'currencies', 'users', 'api', 'journal', 'backup']
 
 export const ui = reactive({
   sidebarCollapsed: false,
@@ -29,7 +29,7 @@ function persist() {
 }
 
 export function initUi() {
-  let stored = null
+  let stored
   try {
     stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')
   } catch {
