@@ -1,20 +1,27 @@
 import { reactive } from 'vue'
 
-// Préférences d'interface persistées : repli de la barre latérale, tiroir mobile
-// et mode d'affichage des listes.
+// Préférences d'interface persistées : repli de la barre latérale, tiroir mobile,
+// mode d'affichage des listes et onglet d'administration courant.
 const STORAGE_KEY = 'aviadb-ui'
+
+export const ADMIN_TABS = ['items', 'tags', 'currencies', 'users', 'backup']
 
 export const ui = reactive({
   sidebarCollapsed: false,
   mobileOpen: false,
   viewMode: 'grid', // 'grid' | 'list'
+  adminTab: 'items',
 })
 
 function persist() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ sidebarCollapsed: ui.sidebarCollapsed, viewMode: ui.viewMode }),
+      JSON.stringify({
+        sidebarCollapsed: ui.sidebarCollapsed,
+        viewMode: ui.viewMode,
+        adminTab: ui.adminTab,
+      }),
     )
   } catch {
     /* stockage indisponible : on garde les valeurs en mémoire */
@@ -31,9 +38,16 @@ export function initUi() {
   if (stored && typeof stored === 'object') {
     ui.sidebarCollapsed = Boolean(stored.sidebarCollapsed)
     ui.viewMode = stored.viewMode === 'list' ? 'list' : 'grid'
+    if (ADMIN_TABS.includes(stored.adminTab)) ui.adminTab = stored.adminTab
   }
   // Sur petit écran, la barre latérale est un tiroir : jamais ouverte au départ.
   ui.mobileOpen = false
+}
+
+export function setAdminTab(tab) {
+  if (!ADMIN_TABS.includes(tab)) return
+  ui.adminTab = tab
+  persist()
 }
 
 export function toggleSidebar() {

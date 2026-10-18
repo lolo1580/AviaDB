@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, backupUrl, exportCsvUrl, photoUrl } from '../api'
 import { auth, canWrite, isAdmin, refreshSession } from '../auth'
+import { ui, setAdminTab } from '../ui'
 import { STATUS_LABEL, TYPE_LABEL, formatMoney } from '../labels'
 import { currencyLabel, refreshRates, saveBaseCurrency, saveRates, settings } from '../settings'
 import { isPending, optimistic, tempId } from '../optimistic'
@@ -9,6 +10,7 @@ import { confirm as askConfirm } from '../composables/useConfirm'
 import { prompt as askPrompt } from '../composables/usePrompt'
 import { useItemList } from '../composables/useItemList'
 import { toast } from '../toast'
+import AppTabs from '../components/ui/AppTabs.vue'
 import FilterBar from '../components/FilterBar.vue'
 import ItemFormModal from '../components/ItemFormModal.vue'
 
@@ -28,11 +30,58 @@ const filters = reactive({
 
 // Liste des objets + mutations optimistes (les facettes suivent en arrière-plan).
 const list = useItemList({ limit: 500, refreshStats: async () => { await loadFacets() } })
-const { items, total, loading, error: listError } = list
+const { items } = list
+const total = computed(() => list.total.value)
+const loading = computed(() => list.loading.value)
+const listError = computed(() => list.error.value)
+
+/** Devises réellement utilisées par la collection (pour ne pas afficher 25 taux). */
+const usedCurrencies = ref([])
 
 const selected = ref([])
 const showForm = ref(false)
 const editing = ref(null)
+
+// Catalogue d'onglets : chaque catégorie regroupe une préoccupation.
+const tabs = computed(() =>
+  [
+    { id: 'items', label: 'Objets', icon: 'collection', badge: total.value },
+    { id: 'tags', label: 'Tags', icon: 'inbox', badge: tags.value.length },
+    { id: 'currencies', label: 'Devises & taux', icon: 'charts', badge: Object.keys(settings.rates || {}).length },
+    isAdmin() ? { id: 'users', label: 'Comptes', icon: 'user', badge: users.value.length } : null,
+    { id: 'backup', label: 'Sauvegarde', icon: 'external', badge: null },
+  ].filter(Boolean),
+)
+
+function selectTab(tab) {
+  setAdminTab(tab)
+}
+
+// Devises affichées dans l'onglet : celles utilisées, plus la devise de référence.
+const showAllRates = ref(false)
+const rateFilter = ref('')
+
+const visibleRateCodes = computed(() => {
+  const codes = Object.keys(rateDraft.value).sort()
+  const base = settings.default_currency
+  const query = rateFilter.value.trim().toLowerCase()
+  const kept = showAllRates.value
+    ? codes
+    : codes.filter((code) => code === base || usedCurrencies.value.includes(code))
+  if (!query) return kept
+  return kept.filter(
+    (code) => code.toLowerCase().includes(query) || (currencyLabel(code) || '').toLowerCase().includes(query),
+  )
+})
+
+async function loadUsage() {
+  try {
+    const stats = await api.getStats()
+    usedCurrencies.value = (stats.by_currency || []).map((bucket) => bucket.key)
+  } catch {
+    /* sans conséquence : on retombe sur la devise de référence */
+  }
+}
 
 // Actions en masse
 const bulkStatus = ref('STORED_BOX')
@@ -74,7 +123,7 @@ async function load() {
 onMounted(async () => {
   if (!auth.checked) await refreshSession()
   await load()
-  await loadUsers()
+  await Promise.all([loadUsers(), loadUsage()])
 })
 
 function specific(item) {
@@ -495,21 +544,45 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
 
 <template>
   <div class="flex flex-col gap-6">
-    <!-- Panneau d'administration (l'accès est déjà protégé en amont) -->
-    <div class="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">Administration</h2>
-          <p class="text-sm text-slate-500 dark:text-slate-400">
-            {{ total }} objet(s)
-            <span v-if="!auth.enabled" class="text-amber-600 dark:text-amber-400">
-              · accès libre (ADMIN_PASSWORD non défini)</span>
-          </p>
-        </div>
+    <!-- En-tête : l'accès est déjà protégé en amont -->
+    <div>
+      <h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">Administration</h2>
+      <p class="text-sm text-slate-500 dark:text-slate-400">
+        {{ total }} objet(s) · {{ tags.length }} tag(s) · {{ users.length }} compte(s)
+        <span v-if="!auth.enabled" class="text-amber-600 dark:text-amber-400">
+          · accès libre (ADMIN_PASSWORD non défini)</span>
+      </p>
+    </div>
+
+    <!-- Catalogue d'onglets, collant sous la barre du haut -->
+    <AppTabs
+      :model-value="ui.adminTab"
+      :tabs="tabs"
+      class="sticky top-16 z-20 -mx-1 bg-slate-100/95 px-1 backdrop-blur dark:bg-slate-950/95"
+      @update:model-value="selectTab"
+    />
+
+    <p
+      v-if="notice"
+      class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+    >
+      {{ notice }}
+    </p>
+    <p
+      v-if="error || listError"
+      class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
+    >
+      {{ error || listError }}
+    </p>
+
+    <!-- ================================ Onglet « Objets » ================================ -->
+    <section v-if="ui.adminTab === 'items'" id="panel-items" role="tabpanel" aria-labelledby="tab-items" class="flex flex-col gap-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">Objets de la collection</h3>
         <div class="flex flex-wrap gap-2">
           <button v-if="canWrite()" type="button" :class="btnPrimary" @click="openCreate">+ Nouvel objet</button>
           <button type="button" :class="btn" @click="exportJson">Exporter JSON</button>
           <a :href="exportCsvUrl()" :class="btn" download>Exporter CSV</a>
-          <a :href="backupUrl()" :class="btn" download>Sauvegarder (ZIP)</a>
           <label v-if="canWrite()" :class="['cursor-pointer', btn]">
             Importer JSON
             <input type="file" accept="application/json,.json" class="hidden" @change="importJson" />
@@ -518,29 +591,11 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
             Importer CSV
             <input type="file" accept="text/csv,.csv" class="hidden" @change="importCsvFile" />
           </label>
-          <label v-if="canWrite()" :class="['cursor-pointer', btn]">
-            Restaurer (ZIP)
-            <input type="file" accept="application/zip,.zip" class="hidden" @change="restoreFile" />
-          </label>
           <button type="button" :class="btn" @click="load">Rafraîchir</button>
         </div>
       </div>
 
       <FilterBar :filters="filters" :facets="facets" :enums="enums" :total="total" />
-
-      <p
-        v-if="notice"
-        class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
-      >
-        {{ notice }}
-      </p>
-      <p
-        v-if="error || listError"
-        class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
-      >
-        {{ error || listError }}
-      </p>
-
       <!-- Barre d'actions en masse -->
       <div
         v-if="selected.length && canWrite()"
@@ -689,13 +744,25 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
           Aucun objet
         </p>
       </div>
+    </section>
 
-      <!-- Tags -->
-      <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">
-          Vocabulaire de tags ({{ tags.length }})
-        </h3>
-        <ul class="mt-3 flex flex-wrap gap-2">
+    <!-- ================================ Onglet « Tags » ================================ -->
+    <section
+      v-else-if="ui.adminTab === 'tags'"
+      id="panel-tags"
+      role="tabpanel"
+      aria-labelledby="tab-tags"
+      class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">Vocabulaire de tags</h3>
+          <p class="text-xs text-slate-500 dark:text-slate-400">
+            {{ tags.length }} tag(s). Renommer un tag le met à jour sur tous les objets.
+          </p>
+        </div>
+      </div>
+      <ul class="mt-3 flex flex-wrap gap-2">
           <li
             v-for="tag in tags"
             :key="tag.id"
@@ -721,11 +788,17 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
           </li>
         </ul>
         <p v-if="!tags.length" class="mt-2 text-sm text-slate-400 dark:text-slate-500">Aucun tag.</p>
-      </section>
+    </section>
 
-      <!-- Devises et taux -->
-      <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div class="flex flex-wrap items-end justify-between gap-3">
+    <!-- ============================ Onglet « Devises & taux » ============================ -->
+    <section
+      v-else-if="ui.adminTab === 'currencies'"
+      id="panel-currencies"
+      role="tabpanel"
+      aria-labelledby="tab-currencies"
+      class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+    >
+      <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">Devises &amp; taux de change</h3>
             <p class="text-xs text-slate-500 dark:text-slate-400">
@@ -763,13 +836,32 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
           </div>
         </div>
 
-        <p v-if="!rateCodes.length" class="mt-3 text-sm text-slate-400 dark:text-slate-500">
-          Cliquez sur « Actualiser depuis la BCE » pour récupérer les taux du jour.
+        <div class="mt-4 flex flex-wrap items-end gap-3">
+          <label class="flex min-w-52 flex-1 flex-col gap-1">
+            <span class="text-xs font-medium text-slate-500 dark:text-slate-400">Filtrer les devises</span>
+            <input
+              v-model="rateFilter"
+              type="search"
+              placeholder="USD, livre, franc…"
+              class="rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm outline-none focus:border-sky-500 dark:border-slate-700"
+            />
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 pb-2 text-sm text-slate-600 dark:text-slate-300">
+            <input v-model="showAllRates" type="checkbox" class="h-4 w-4 rounded border-slate-300 dark:border-slate-700" />
+            Toutes les devises ({{ rateCodes.length }})
+          </label>
+        </div>
+
+        <p v-if="!visibleRateCodes.length" class="mt-3 text-sm text-slate-400 dark:text-slate-500">
+          <template v-if="!rateCodes.length">
+            Cliquez sur « Actualiser depuis la BCE » pour récupérer les taux du jour.
+          </template>
+          <template v-else>Aucune devise ne correspond.</template>
         </p>
 
         <div v-else class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           <label
-            v-for="code in rateCodes"
+            v-for="code in visibleRateCodes"
             :key="code"
             class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-800"
           >
@@ -790,21 +882,31 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
           </label>
         </div>
 
-        <div v-if="rateCodes.length && canWrite()" class="mt-3 flex gap-2">
+        <p
+          v-if="!showAllRates && rateCodes.length && visibleRateCodes.length < rateCodes.length"
+          class="mt-2 text-xs text-slate-400 dark:text-slate-500"
+        >
+          Seules les devises utilisées par la collection (et la devise de référence) sont affichées.
+        </p>
+
+        <div v-if="visibleRateCodes.length && canWrite()" class="mt-3 flex flex-wrap items-center gap-3">
           <button type="button" :class="btnPrimary" :disabled="ratesBusy" @click="saveRatesDraft">
             Enregistrer les taux
           </button>
-          <p class="self-center text-xs text-slate-400 dark:text-slate-500">
+          <p class="text-xs text-slate-400 dark:text-slate-500">
             Convention BCE : nombre d’unités de la devise pour 1 EUR. Corrigez une valeur si besoin.
           </p>
         </div>
-      </section>
+    </section>
 
-      <!-- Comptes -->
-      <section
-        v-if="isAdmin()"
-        class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
-      >
+    <!-- ============================== Onglet « Comptes » ============================== -->
+    <section
+      v-else-if="ui.adminTab === 'users' && isAdmin()"
+      id="panel-users"
+      role="tabpanel"
+      aria-labelledby="tab-users"
+      class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+    >
         <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">
           Comptes ({{ users.length }})
         </h3>
@@ -907,7 +1009,54 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
           </label>
           <button type="submit" :class="btnPrimary">Créer le compte</button>
         </form>
-      </section>
+    </section>
+
+    <!-- ============================= Onglet « Sauvegarde » ============================= -->
+    <section
+      v-else-if="ui.adminTab === 'backup'"
+      id="panel-backup"
+      role="tabpanel"
+      aria-labelledby="tab-backup"
+      class="flex flex-col gap-4"
+    >
+      <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">Sauvegarde complète (ZIP)</h3>
+        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          L’archive contient les objets, leurs photos, les réglages (devise de référence et taux)
+          et les comptes. Un seul fichier à conserver — c’est aussi le moyen de transférer la
+          collection vers une autre base.
+        </p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <a :href="backupUrl()" :class="btnPrimary" download>Sauvegarder maintenant</a>
+          <label v-if="canWrite()" :class="['cursor-pointer', btn]">
+            Restaurer une archive…
+            <input type="file" accept="application/zip,.zip" class="hidden" @change="restoreFile" />
+          </label>
+        </div>
+        <p class="mt-2 text-xs text-slate-400 dark:text-slate-500">
+          À la restauration, vous choisissez entre <strong>remplacer</strong> la collection ou
+          <strong>fusionner</strong> avec l’existant. Les comptes déjà présents ne sont jamais écrasés.
+        </p>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">Sauvegarde PostgreSQL</h3>
+        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          Pour une sauvegarde au niveau du moteur (restauration par <code>psql</code>) :
+        </p>
+        <pre class="mt-2 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-100"><code>docker exec aviadb-db pg_dump -U aviadb aviadb | gzip &gt; aviadb-pg.sql.gz</code></pre>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">Documentation de l’API</h3>
+        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          Page dédiée, hors de l’application : schéma à jour et essais de requêtes.
+        </p>
+        <a href="/api-docs/" target="_blank" rel="noopener" :class="['mt-3 inline-block', btn]">
+          Ouvrir la documentation ↗
+        </a>
+      </div>
+    </section>
 
     <ItemFormModal
       :open="showForm && canWrite()"

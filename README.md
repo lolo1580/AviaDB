@@ -136,7 +136,7 @@ aviadb/
 │   ├── src/
 │   │   ├── layout/       # navItems, icons (SVG inline), modalStack
 │   │   ├── components/
-│   │   │   ├── ui/       # AppModal, AppButton, ConfirmDialog, PromptDialog
+│   │   │   ├── ui/       # AppModal, AppButton, AppTabs, ConfirmDialog, PromptDialog
 │   │   │   ├── layout/   # AppShell, AppSidebar, AppTopbar, notifications, avatar
 │   │   │   └── …         # LoginPanel, ThemeToggle, PhotoLightbox, StatsPanel, …
 │   │   ├── views/        # Collection, Souhaits, Statistiques, Admin
@@ -290,8 +290,21 @@ défaut) ; ensuite, gérez les comptes depuis l'interface — le mot de passe
 d'environnement n'est jamais réécrit.
 
 Connexion : `http://<hote>/` — le formulaire s'affiche en premier.
-Panneau d'administration : `http://<hote>/admin` (tableau, actions en masse,
-tags, comptes, sauvegarde).
+
+### Panneau d'administration
+
+`http://<hote>/admin`, organisé en onglets (`AppTabs.vue`, navigation aux flèches,
+onglet retenu d'une visite à l'autre) :
+
+| Onglet | Contenu |
+|---|---|
+| **Objets** | recherche et filtres, tableau dense, statut modifiable par ligne, sélection multiple (supprimer, statut, tags), création, export/import JSON et CSV |
+| **Tags** | vocabulaire : renommer (répercuté sur tous les objets) ou supprimer |
+| **Devises & taux** | devise de référence, actualisation BCE, correction manuelle des taux. Seules les devises **utilisées par la collection** sont affichées — une case à cocher révèle les 25 devises, un champ filtre la liste |
+| **Comptes** | création, rôle (administrateur / lecteur), activation, mot de passe, suppression *(administrateur)* |
+| **Sauvegarde** | archive ZIP complète, restauration (remplacer / fusionner), commande `pg_dump`, lien vers la documentation d'API |
+
+Les statistiques de la collection sont dans **Collection**, pas dans l'administration.
 
 Authentification : mots de passe hachés en **PBKDF2-SHA256** (stdlib), jetons
 **HMAC-SHA256** signés transmis en cookie `HttpOnly` ou en en-tête
