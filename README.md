@@ -53,8 +53,9 @@ cp .env.example .env      # puis renseignez ADMIN_PASSWORD et POSTGRES_PASSWORD
 docker compose up -d --build
 ```
 
-Le fichier `docker-compose.yml` démarre trois services : **db** (PostgreSQL 18),
-**backend** (FastAPI) et **frontend** (Nginx qui sert la SPA et relaie `/api`).
+Le fichier `docker-compose.yml` démarre quatre services : **db** (PostgreSQL 18),
+**backend** (FastAPI), **frontend** (Nginx qui sert la SPA et relaie `/api`) et
+**backup** (sauvegardes ZIP planifiées).
 
 - Interface : <http://localhost:8080>
 - Documentation de l’API : <http://localhost:8080/api-docs/>
@@ -127,11 +128,15 @@ aviadb/
 │   │   ├── currency.py   # devises, taux de change, conversions
 │   │   ├── media.py      # upload, conversion WebP, vignettes
 │   │   ├── auth.py       # comptes, rôles, jetons, require_admin
-│   │   ├── admin.py      # bulk, import/export, comptes, tags, taux
+│   │   ├── admin.py      # bulk, import/export, comptes, tags, taux, rapport PDF
+│   │   ├── report.py     # rapport d'inventaire et fiche objet (PDF)
 │   │   ├── backup.py     # sauvegarde / restauration ZIP
+│   │   ├── backup_scheduler.py  # sauvegardes planifiées (service Compose `backup`)
 │   │   ├── migrations.py # ajout idempotent des colonnes manquantes
-│   │   └── main.py       # routes FastAPI
-│   ├── tests/            # suite pytest (conftest.py, helpers.py, 7 modules)
+│   │   └── main.py       # routes FastAPI + journal d'activité (middleware)
+│   ├── tests/            # suite pytest (conftest.py, helpers.py, 15 modules)
+│   ├── ruff.toml          # configuration du linter Python (Ruff)
+│   ├── docker-entrypoint.sh  # abandon de privilèges (utilisateur non-root)
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── requirements-dev.txt
@@ -140,30 +145,36 @@ aviadb/
 │   │   ├── layout/       # navItems, icons (SVG inline), modalStack
 │   │   ├── components/
 │   │   │   ├── ui/       # AppModal, AppDrawer, AppButton, AppTabs, ConfirmDialog, PromptDialog
-│   │   │   └── PriceChart.vue  # courbe d'évolution d'un prix
 │   │   │   ├── layout/   # AppShell, AppSidebar, AppTopbar, notifications, avatar
+│   │   │   ├── PriceChart.vue  # courbe d'évolution d'un prix
 │   │   │   └── …         # LoginPanel, ThemeToggle, PhotoLightbox, StatsPanel, …
-│   │   ├── views/        # Collection, Souhaits, Statistiques, Admin
+│   │   ├── views/        # Collection, Souhaits, Statistiques, Étiquettes, Admin
 │   │   ├── composables/  # useItemList, useConfirm, usePrompt, useFocusTrap…
+│   │   ├── __tests__/    # tests unitaires Vitest (composables et composants)
 │   │   ├── auth.js       # session et rôle
 │   │   ├── settings.js   # devise de référence et taux
 │   │   ├── classes.js    # arborescence des classes (arbre, chemins)
-│   │   ├── prices.js     # relevés de prix (série, variation, devise de référence)
+│   │   ├── prices.js     # relevés de prix (série, variation, alerte de budget)
 │   │   ├── optimistic.js # registre des opérations + helper optimiste
 │   │   ├── toast.js      # notifications (rollback, « Réessayer »)
 │   │   ├── notifications.js  # centre de notifications (cloche)
 │   │   ├── ui.js         # état d'interface persistant (rail, vue grille/liste)
 │   │   ├── theme.js      # thème clair/sombre (persistant)
-│   │   ├── router.js     # /, /souhaits, /statistiques, /admin
+│   │   ├── router.js     # /, /souhaits, /statistiques, /etiquettes, /admin
 │   │   └── api.js        # client REST
+│   ├── e2e/              # tests de bout en bout (Playwright)
 │   ├── docs/             # page de documentation : index.html (Swagger UI), style.css
+│   ├── vitest.config.js  # tests unitaires (Vitest + jsdom) et couverture
+│   ├── playwright.config.js  # tests de bout en bout
+│   ├── eslint.config.js  # lint (ESLint) et mise en forme (Prettier)
 │   ├── nginx.conf.template  # SPA, documentation /api-docs, proxy /api et /uploads
 │   ├── Dockerfile        # multi-stage : build Vite → Nginx
 │   └── package.json
-├── .github/workflows/ci.yml  # intégration continue (pytest PostgreSQL, build)
+├── .github/workflows/ci.yml  # CI : lint, pytest PostgreSQL, Vitest, build, Playwright
 ├── .env.example          # modèle de configuration
 ├── data/                 # images uploadées (la base est dans le volume Docker)
-├── docker-compose.yml    # db + backend + frontend
+├── backups/              # sauvegardes ZIP planifiées (service `backup`)
+├── docker-compose.yml    # db + backend + frontend + backup
 └── docker-compose.host.yml   # surcharge réseau hôte
 ```
 
@@ -274,6 +285,9 @@ FastAPI expose aussi ses propres pages sur le port 8000 : `/docs` (Swagger UI) e
 | GET | `/api/admin/export.csv` | export CSV (tableur) |
 | GET | `/api/admin/backup` | sauvegarde ZIP (JSON + toutes les images) |
 | POST | `/api/admin/restore` | restauration ZIP (`mode=merge` ou `replace`) |
+| GET | `/api/admin/report.pdf` | rapport d'inventaire PDF (totaux + liste des objets) |
+| GET | `/api/items/{item_id}/report.pdf` | fiche détaillée d'un objet (PDF) |
+| GET | `/api/admin/activity` | journal d'activité (audit) *(ADMIN)* |
 | POST | `/api/admin/import` | import JSON |
 | POST | `/api/admin/import.csv` | import CSV (colonnes de l'export) |
 | POST | `/api/items/{item_id}/photos/reorder` | réordonner les photos |
@@ -331,7 +345,8 @@ onglet retenu d'une visite à l'autre) :
 | **Devises & taux** | devise de référence, actualisation BCE, correction manuelle des taux. Seules les devises **utilisées par la collection** sont affichées — une case à cocher révèle les 25 devises, un champ filtre la liste |
 | **Comptes** | création, rôle (administrateur / lecteur), activation, mot de passe, suppression *(administrateur)* |
 | **API** | clés d'accès aux métriques publiques : création (la clé n'est affichée qu'une fois), désactivation, révocation, suivi des appels *(administrateur)* |
-| **Sauvegarde** | archive ZIP complète, restauration (remplacer / fusionner), commande `pg_dump`, lien vers la documentation d'API |
+| **Journal** | journal d'activité (audit) : date, compte, méthode, route et code de retour des dernières écritures. Le journal est **borné** (`ACTIVITY_KEEP`, 5000 entrées) *(administrateur)* |
+| **Sauvegarde** | archive ZIP complète, restauration (remplacer / fusionner), rapport d'inventaire PDF, étiquettes, commande `pg_dump`, lien vers la documentation d'API |
 
 Les statistiques de la collection sont dans **Collection**, pas dans l'administration.
 
@@ -350,16 +365,40 @@ Authentification : mots de passe hachés en **PBKDF2-SHA256** (stdlib), jetons
   historiques), **les comptes** (empreintes PBKDF2, jamais de mot de passe en
   clair) et toutes les images. Un seul fichier à conserver — et le moyen
   portable de changer de moteur de base de données.
+- **Rapport d'inventaire (PDF)** : document prêt à imprimer (totaux de la
+  collection, nombre d'objets valorisés, liste détaillée avec valeurs dans la
+  devise de référence) — utile pour une déclaration d'assurance. Disponible dans
+  **Administration → Sauvegarde**, ou par `GET /api/admin/report.pdf`.
 - **Restaurer (ZIP)** : l'interface propose **remplacer** la collection ou
   **fusionner** avec l'existant. Les comptes déjà présents ne sont jamais
   écrasés (on ne se verrouille pas dehors) ; les autres sont recréés.
 - **Export / import JSON** et **export / import CSV** (colonnes identiques, donc
   aller-retour possible avec un tableur).
+- **Fiche d'un objet (PDF)** : depuis le panneau de détail, une page avec photo,
+  caractéristiques, liens et historique de prix (`GET /api/items/{id}/report.pdf`).
+- **Sauvegardes planifiées** : le service Compose `backup` écrit une archive ZIP
+  complète dans `./backups` à intervalle régulier et ne conserve que les dernières
+  (`BACKUP_KEEP`, 7 par défaut) — sans intervention. Voir
+  [Sauvegardes automatiques](#sauvegardes-automatiques).
+- **Journal d'activité** : les écritures sont tracées (compte, méthode, route, code)
+  et consultables dans **Administration → Journal**.
 - **Sauvegarde au niveau PostgreSQL** :
 
   ```bash
   docker exec aviadb-db pg_dump -U aviadb aviadb | gzip > aviadb-pg.sql.gz
   ```
+
+### Sauvegardes automatiques
+
+Le service Compose **`backup`** réutilise l'image du backend et lance
+`python -m app.backup_scheduler` : toutes les `BACKUP_INTERVAL` secondes (24 h par
+défaut), il écrit une archive ZIP complète dans `./backups`, puis supprime les plus
+anciennes au-delà de `BACKUP_KEEP` (7 par défaut).
+
+```bash
+ls -lh backups/                 # archives produites
+docker compose logs -f backup   # suivi
+```
 
 ## Devises & taux de change
 
@@ -458,8 +497,20 @@ Liens et relevés sont inclus dans la **sauvegarde ZIP** et restaurés avec l'ob
   emplacement, ni date et prix d'achat — des champs sans objet pour une pièce qu'on
   ne possède pas encore. À la place, le **budget visé** et les **liens** vers les
   boutiques, créés en même temps que l'objet.
+- **Alerte de budget** (souhaits) : dès que le dernier relevé de prix d'une pièce
+  recherchée tombe au niveau ou en dessous du **budget visé**, l'écart s'affiche sur
+  la carte (« Sous le budget visé — 20,00 € d'économie ») et une **notification**
+  est déposée dans la cloche. Une alerte n'est signalée qu'une fois par objet et par
+  relevé.
+- **Étiquettes** (`/etiquettes`) : planches de QR codes à imprimer pour le
+  rangement. Chaque étiquette porte le nom, le type, l'**emplacement**, la classe et
+  un QR code qui **rouvre la fiche de l'objet** dans l'application. Filtrable par
+  emplacement ou par nom, mise en page A4 prête pour l'impression (le navigateur
+  produit un PDF si besoin).
 - **Statistiques** (`/statistiques`) : graphiques (type, statut, pays, valeur par
-  pays, acquisitions par année, échelle, matière des patchs) via Chart.js.
+  pays, valeur par **classe** et par **emplacement**, acquisitions et valeur
+  d'acquisition par année, plus-values et moins-values, échelle, matière des patchs)
+  via Chart.js. Le panneau de la collection affiche aussi la **plus-value** globale.
 
 > La gestion des prêts a été retirée de l'interface. Le backend la conserve
 > (colonnes `loaned_to`, `loan_date`, `loan_due_date`, filtre `has_loan`) : elle
@@ -604,7 +655,7 @@ nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`,
 `Permissions-Policy`. `index.html` est servi en `no-store`, les assets sont
 immuables et versionnés par hash.
 
-**Vérifié** — 89 tests (dont 8 dédiés : bombe zip, archive surdimensionnée,
+**Vérifié** — 116 tests (dont 8 dédiés : bombe zip, archive surdimensionnée,
 traversée de chemin, limite d'appels, mots de passe faibles) ; le navigateur ne
 signale **aucune violation CSP** et l'application, les graphiques et la
 documentation fonctionnent avec les en-têtes en place.
@@ -636,6 +687,10 @@ documentation fonctionnent avec les en-têtes en place.
 | `BACKEND_URL` | `http://backend:8000` | URL du backend utilisée par Nginx (frontend) |
 | `PUBLIC_RATE_WINDOW` | `60` | durée de la fenêtre de limitation (secondes) |
 | `RATES_API_URL` | `https://api.frankfurter.dev/v1` | fournisseur de taux de change |
+| `BACKUP_DIR` | `/app/backups` | dossier des sauvegardes ZIP planifiées (service `backup`) |
+| `BACKUP_KEEP` | `7` | nombre d'archives conservées |
+| `BACKUP_INTERVAL` | `86400` | intervalle entre deux sauvegardes (secondes) |
+| `ACTIVITY_KEEP` | `5000` | entrées de journal d'activité conservées (élagage automatique) |
 | `ADMIN_PASSWORD` | *(vide)* | mot de passe du premier admin. **Vide = aucune protection** |
 | `ADMIN_USERNAME` | `admin` | identifiant du premier compte admin |
 | `SECRET_KEY` | *(dérivé d'`ADMIN_PASSWORD`)* | clé de signature des jetons |
@@ -667,27 +722,58 @@ docker run -d --rm --name aviadb-test-db \
 
 cd backend
 pip install -r requirements-dev.txt
+ruff check .                # lint Python
 pytest                     # utilise par défaut la base ci-dessus
 # ou, pour viser une autre base :
 DATABASE_URL=postgresql+psycopg://aviadb:test@localhost:5432/aviadb_test pytest
 ```
 
-La suite (`backend/tests/`, **104 tests**) couvre le CRUD, la validation (dont les
+La suite (`backend/tests/`, **116 tests**) couvre le CRUD, la validation (dont les
 dates invalides), la cascade, l'upload WebP et les vignettes, l'ordre des photos,
-les filtres (y compris par classe et sa descendance), les statistiques et les
-graphiques, les devises et taux de change, les classes hiérarchiques, les liens externes et
-le suivi du prix (dont la lecture assistée et le refus des adresses internes),
-l'authentification et les rôles, les clés d'API et la route publique, les actions
-en masse, l'import/export JSON et CSV, la sauvegarde/restauration (objets, réglages
-et comptes) et le mode sans protection. **Aucun test ne fait d'appel réseau** : le
-fournisseur de taux est simulé et un garde-fou fait échouer toute tentative.
+les filtres (y compris par classe et sa descendance), les statistiques (dont les
+analytiques détaillés) et les graphiques, les devises et taux de change, les classes
+hiérarchiques, les liens externes et le suivi du prix (dont la lecture assistée et
+le refus des adresses internes), l'authentification et les rôles, les clés d'API et
+la route publique, les actions en masse, l'import/export JSON et CSV, la
+sauvegarde/restauration (objets, réglages et comptes), le rapport d'inventaire PDF,
+la fiche objet PDF, le journal d'activité et le mode sans protection. **Aucun test
+ne fait d'appel réseau** : le fournisseur de taux est simulé et un garde-fou fait
+échouer toute tentative.
 
 Chaque test repart d'un schéma vide (`drop_all` / `create_all`), d'où une
 exécution d'une minute environ.
 
-L'intégration continue (`.github/workflows/ci.yml`) lance deux jobs à chaque push
-et pull request : `backend` (pytest, avec un service PostgreSQL) et `frontend`
-(build Vite).
+Le **frontend** dispose de sa propre suite de tests unitaires et d'un lint :
 
-> Note : le conteneur backend tourne en `root`, les fichiers de `./data` sont donc
-> créés avec l'UID root sur l'hôte.
+```bash
+cd frontend
+npm install
+npm run test                # Vitest (composables et composants, 49 tests)
+npm run test:coverage       # + rapport et seuils de couverture
+npm run e2e                 # Playwright (parcours de fumée, API simulée)
+npm run lint                # ESLint (configuration dans eslint.config.js)
+npm run format              # Prettier (mise en forme)
+```
+
+Les tests Vitest (`frontend/src/__tests__/`) portent sur les mises à jour
+optimistes (`optimistic.js`, `useItemList.js`), l'arborescence des classes, les
+relevés de prix, l'alerte de budget, les conversions de devises et deux composants
+(`ItemCard`, `FilterBar`). La **couverture** est suivie sur le périmètre testé, avec
+un seuil qui fait échouer la CI en cas de régression. Les tests **Playwright**
+(`frontend/e2e/`) rejouent un parcours de fumée sur l'application construite, avec
+les appels API simulés — aucun backend requis.
+
+L'intégration continue (`.github/workflows/ci.yml`) lance trois jobs à chaque push
+et pull request : **backend** (Ruff puis pytest, sur un service PostgreSQL),
+**frontend** (ESLint, Vitest avec couverture, puis build Vite) et **e2e**
+(Playwright sur Chromium).
+
+### Conteneurs non privilégiés
+
+Le backend s'exécute sous un utilisateur dédié (UID/GID 1000, comme l'utilisateur
+courant sur l'hôte). Au démarrage, `docker-entrypoint.sh` rend la propriété de
+`/app/data` et `/app/backups` à cet utilisateur puis **abandonne les privilèges**
+(`setpriv`). Les images téléversées et les sauvegardes appartiennent donc à
+l'utilisateur courant, plus à `root`. Nginx, lui, conserve root pour pouvoir
+écouter sur le port 80 en réseau hôte (ses processus de travail sont non
+privilégiés).
