@@ -525,6 +525,53 @@ l'interface entre thème clair et sombre.
 - Implémentation Tailwind v4 : variante `dark` pilotée par la classe `.dark` sur
   `<html>` (`@custom-variant dark` dans `src/style.css`).
 
+## Sécurité
+
+Passe de durcissement effectuée sur l'ensemble de la pile.
+
+**Périmètre protégé** — tout exige une session, sauf :
+`/api/health` (supervision), `/api/admin/login` et `/api/admin/session` (avant
+connexion), et `/api/public/*` (authentifié par clé d'API). Les routes d'écriture
+exigent en plus le rôle **ADMIN**, revérifié en base à chaque appel.
+
+**Comptes** — mots de passe hachés en **PBKDF2-SHA256** (200 000 itérations, sel
+par compte), jetons **HMAC-SHA256** signés, cookie `HttpOnly`. Blocage temporaire
+après `ADMIN_MAX_FAILURES` échecs ; un mot de passe faible ou l'absence de mot de
+passe sont **signalés bruyamment au démarrage**.
+
+**Médias** — seuls JPEG, PNG, WebP, GIF, BMP et TIFF sont acceptés ; toute image
+est ré-encodée en **WebP** (donc aucun fichier exécutable servi), la taille est
+bornée (`MAX_UPLOAD_BYTES`), les noms de fichiers sont aléatoires et la
+suppression est protégée contre la traversée de chemin.
+
+**Restauration de sauvegarde** — bornes ajoutées : taille de l'archive
+(`MAX_BACKUP_BYTES`, 256 Mo), volume décompressé (`MAX_BACKUP_UNCOMPRESSED`,
+1 Go) et nombre d'entrées (`MAX_BACKUP_ENTRIES`) — une **bombe zip** est refusée
+avant toute écriture. Les chemins remontant hors du dossier images sont ignorés.
+La sauvegarde est écrite dans un fichier temporaire puis **supprimée après
+téléchargement**, au lieu de transiter entièrement en mémoire.
+
+**Clients externes** — les clés d'API sont stockées en **empreinte SHA-256** et
+limitées à `PUBLIC_RATE_LIMIT` appels par fenêtre (`PUBLIC_RATE_WINDOW`), pour
+qu'un widget mal configuré ne martèle pas la base.
+
+**En-têtes HTTP** (`frontend/nginx-security.conf`) — `Content-Security-Policy`
+(scripts distants bloqués, `frame-ancestors 'self'`), `X-Content-Type-Options:
+nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`,
+`Permissions-Policy`. `index.html` est servi en `no-store`, les assets sont
+immuables et versionnés par hash.
+
+**Vérifié** — 89 tests (dont 8 dédiés : bombe zip, archive surdimensionnée,
+traversée de chemin, limite d'appels, mots de passe faibles) ; le navigateur ne
+signale **aucune violation CSP** et l'application, les graphiques et la
+documentation fonctionnent avec les en-têtes en place.
+
+> **À votre charge.** En HTTP simple sur le réseau local, le mot de passe circule
+> en clair : pour un accès hors LAN, placez l'application derrière HTTPS et
+> activez `ADMIN_COOKIE_SECURE=true`. Une archive de sauvegarde contient les
+> empreintes de mots de passe : conservez-la à l'abri. Enfin, révoquez une clé
+> d'API dès qu'elle n'est plus utilisée.
+
 ## Variables d'environnement
 
 | Variable | Défaut | Rôle |
@@ -537,7 +584,11 @@ l'interface entre thème clair et sombre.
 | `IMAGE_WEBP_QUALITY` | `85` | qualité WebP de l'image principale |
 | `IMAGE_THUMB_QUALITY` | `80` | qualité WebP de la vignette |
 | `MAX_UPLOAD_BYTES` | `15728640` | taille max d'un upload (15 Mo) |
+| `MAX_BACKUP_BYTES` | `268435456` | taille max d'une archive de restauration (256 Mo) |
+| `MAX_BACKUP_UNCOMPRESSED` | `1073741824` | volume décompressé max (1 Go) |
+| `PUBLIC_RATE_LIMIT` | `60` | appels autorisés par clé d'API et par fenêtre |
 | `BACKEND_URL` | `http://backend:8000` | URL du backend utilisée par Nginx (frontend) |
+| `PUBLIC_RATE_WINDOW` | `60` | durée de la fenêtre de limitation (secondes) |
 | `RATES_API_URL` | `https://api.frankfurter.dev/v1` | fournisseur de taux de change |
 | `ADMIN_PASSWORD` | *(vide)* | mot de passe du premier admin. **Vide = aucune protection** |
 | `ADMIN_USERNAME` | `admin` | identifiant du premier compte admin |

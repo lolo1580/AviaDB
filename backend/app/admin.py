@@ -11,7 +11,8 @@ import io
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from starlette.background import BackgroundTask
 from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -172,12 +173,14 @@ def export_csv(db: Session = Depends(get_db)):
 
 @router.get("/backup")
 def download_backup(db: Session = Depends(get_db)):
-    """Archive ZIP : aviadb.json + toutes les images."""
+    """Archive ZIP : aviadb.json (objets, réglages, comptes) + toutes les images."""
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    return StreamingResponse(
-        iter([backup.build_backup(db)]),
+    path = backup.build_backup_file(db)
+    return FileResponse(
+        path,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="aviadb-backup-{stamp}.zip"'},
+        filename=f"aviadb-backup-{stamp}.zip",
+        background=BackgroundTask(path.unlink, missing_ok=True),
     )
 
 

@@ -5,15 +5,20 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # En-têtes de sécurité pour toutes les réponses (voir le fragment).
+    include /etc/nginx/snippets/security.conf;
+
     # index.html ne doit jamais être mis en cache : il référence les assets
     # versionnés (hash), donc un HTML périmé pointerait vers un ancien bundle.
     location = /index.html {
+        include /etc/nginx/snippets/security.conf;
         add_header Cache-Control "no-store, no-cache, must-revalidate";
         add_header Pragma "no-cache";
     }
 
     # Assets versionnés par leur hash : cache long et immuable.
     location /assets/ {
+        include /etc/nginx/snippets/security.conf;
         add_header Cache-Control "public, max-age=31536000, immutable";
         try_files $uri =404;
     }
@@ -38,6 +43,16 @@ server {
     location = /openapi.json {
         proxy_pass ${BACKEND_URL};
         proxy_set_header Host $host;
+    }
+
+    # Restauration d'une sauvegarde : archive plus volumineuse que les images.
+    # Déclaré avant /api/ : nginx retient la correspondance la plus précise.
+    location = /api/admin/restore {
+        proxy_pass ${BACKEND_URL};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 300s;
+        client_max_body_size 256m;
     }
 
     # URL du backend, injectée au démarrage du conteneur (envsubst).

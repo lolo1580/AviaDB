@@ -22,6 +22,7 @@ FROM nginx:1.27-alpine
 # Le template est rendu au démarrage avec les variables d'environnement
 # (entrée officielle nginx : /etc/nginx/templates/*.template -> conf.d/*.conf).
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY nginx-security.conf /etc/nginx/snippets/security.conf
 
 # Valeur par défaut (réseau bridge Compose).
 ENV BACKEND_URL=http://backend:8000

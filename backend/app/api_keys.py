@@ -12,9 +12,10 @@ affichée qu'une fois, à la création.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import logging
+import os
 import secrets
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -29,6 +30,23 @@ logger = logging.getLogger("aviadb.api_keys")
 
 KEY_PREFIX = "aviadb_"
 KEY_BYTES = 24  # ~32 caractères en base64 urlsafe
+
+# Limitation de débit par clé : un widget mal configuré ne doit pas marteler la
+# base. En mémoire, suffisant pour un service mono-processus.
+RATE_LIMIT = int(os.getenv("PUBLIC_RATE_LIMIT", "60"))
+RATE_WINDOW = int(os.getenv("PUBLIC_RATE_WINDOW", "60"))
+_hits: dict[int, list[float]] = {}
+
+
+def _too_many_requests(key_id: int) -> bool:
+    now = time.time()
+    recent = [stamp for stamp in _hits.get(key_id, []) if now - stamp < RATE_WINDOW]
+    _hits[key_id] = recent
+    return len(recent) >= RATE_LIMIT
+
+
+def _record_hit(key_id: int) -> None:
+    _hits.setdefault(key_id, []).append(time.time())
 
 
 def generate_key() -> str:
@@ -62,6 +80,13 @@ def require_api_key(
     ).first()
     if record is None or not record.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Clé d'API invalide ou révoquée")
+
+    if _too_many_requests(record.id):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Trop d'appels (max {RATE_LIMIT} par {RATE_WINDOW} s)",
+        )
+    _record_hit(record.id)
 
     record.last_used_at = datetime.now(timezone.utc)
     record.request_count += 1

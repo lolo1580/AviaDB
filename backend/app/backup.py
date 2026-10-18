@@ -13,9 +13,11 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
+import tempfile
 import zipfile
 from datetime import date, datetime, timezone
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import select
@@ -27,6 +29,12 @@ logger = logging.getLogger("aviadb.backup")
 
 MANIFEST_NAME = "aviadb.json"
 IMAGES_PREFIX = "images"
+
+# Bornes de sécurité à la restauration : une archive piégée (ou simplement
+# énorme) ne doit pas épuiser la mémoire du conteneur.
+MAX_ARCHIVE_BYTES = int(os.getenv("MAX_BACKUP_BYTES", 256 * 1024 * 1024))
+MAX_UNCOMPRESSED_BYTES = int(os.getenv("MAX_BACKUP_UNCOMPRESSED", 1024 * 1024 * 1024))
+MAX_ARCHIVE_ENTRIES = int(os.getenv("MAX_BACKUP_ENTRIES", 20000))
 
 _ITEM_LOADS = (
     selectinload(models.Item.diecast),
@@ -77,8 +85,12 @@ def _dump_users(db: Session) -> list[dict]:
     ]
 
 
-def build_backup(db: Session) -> bytes:
-    """Construit l'archive ZIP de sauvegarde en mémoire."""
+def build_backup_file(db: Session) -> Path:
+    """Écrit l'archive de sauvegarde dans un fichier temporaire.
+
+    On évite de tout garder en mémoire : une collection de photos peut peser
+    plusieurs centaines de Mo. Le fichier est supprimé par l'appelant.
+    """
     items = (
         db.scalars(select(models.Item).options(*_ITEM_LOADS).order_by(models.Item.id)).all()
     )
@@ -91,14 +103,21 @@ def build_backup(db: Session) -> bytes:
         "users": _dump_users(db),
     }
 
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(MANIFEST_NAME, json.dumps(document, ensure_ascii=False, indent=2))
-        for path in sorted(media.UPLOAD_DIR.rglob("*")):
-            if path.is_file():
-                relative = path.relative_to(media.UPLOAD_DIR).as_posix()
-                archive.write(path, f"{IMAGES_PREFIX}/{relative}")
-    return buffer.getvalue()
+    handle = tempfile.NamedTemporaryFile(prefix="aviadb-backup-", suffix=".zip", delete=False)
+    handle.close()
+    target = Path(handle.name)
+
+    try:
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(MANIFEST_NAME, json.dumps(document, ensure_ascii=False, indent=2))
+            for path in sorted(media.UPLOAD_DIR.rglob("*")):
+                if path.is_file():
+                    relative = path.relative_to(media.UPLOAD_DIR).as_posix()
+                    archive.write(path, f"{IMAGES_PREFIX}/{relative}")
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    return target
 
 
 def _restore_item(db: Session, entry: dict) -> models.Item:
@@ -147,14 +166,35 @@ def _restore_item(db: Session, entry: dict) -> models.Item:
 
 def restore_backup(db: Session, upload: UploadFile, replace: bool) -> dict:
     """Restaure une archive. `replace=True` vide la collection au préalable."""
-    data = upload.file.read()
+    data = upload.file.read(MAX_ARCHIVE_BYTES + 1)
     if not data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Fichier vide")
+    if len(data) > MAX_ARCHIVE_BYTES:
+        raise HTTPException(
+            413,
+            f"Archive trop volumineuse (max {MAX_ARCHIVE_BYTES // (1024 * 1024)} Mo)",
+        )
 
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Archive ZIP illisible")
+
+    # Garde-fous contre les archives pièges : nombre d'entrées et volume
+    # décompressé annoncés, avant toute écriture sur disque.
+    entries_meta = [info for info in archive.infolist() if not info.is_dir()]
+    if len(entries_meta) > MAX_ARCHIVE_ENTRIES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Archive refusée : {len(entries_meta)} entrées (max {MAX_ARCHIVE_ENTRIES})",
+        )
+    total_size = sum(info.file_size for info in entries_meta)
+    if total_size > MAX_UNCOMPRESSED_BYTES:
+        raise HTTPException(
+            413,
+            "Archive refusée : volume décompressé trop important "
+            f"({total_size // (1024 * 1024)} Mo, max {MAX_UNCOMPRESSED_BYTES // (1024 * 1024)} Mo)",
+        )
 
     if MANIFEST_NAME not in archive.namelist():
         raise HTTPException(

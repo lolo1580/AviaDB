@@ -70,6 +70,19 @@ def failure_window() -> int:
 # --------------------------------------------------------------------------- #
 # État de protection (mis en cache, recalculé aux changements de comptes)
 # --------------------------------------------------------------------------- #
+# Mots de passe notoirement faibles : le compose en propose un par défaut, mieux
+# vaut prévenir bruyamment s'il n'a pas été changé.
+WEAK_PASSWORDS = {
+    "change-me",
+    "changeme",
+    "password",
+    "motdepasse",
+    "admin",
+    "aviadb",
+    "secret",
+    "123456",
+}
+
 _protection_enabled = False
 
 
@@ -252,6 +265,13 @@ def bootstrap_admin(db: Session) -> bool:
         logger.warning(
             "Aucun compte et ADMIN_PASSWORD non défini : l'application est accessible "
             "sans authentification. Définissez ADMIN_PASSWORD pour activer la protection."
+        )
+
+    if protection_enabled() and password.strip().lower() in WEAK_PASSWORDS:
+        logger.warning(
+            "ADMIN_PASSWORD est un mot de passe faible (« %s ») : changez-le, ou "
+            "modifiez-le depuis Administration → Comptes.",
+            password,
         )
     return created
 
