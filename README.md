@@ -566,9 +566,10 @@ traversée de chemin, limite d'appels, mots de passe faibles) ; le navigateur ne
 signale **aucune violation CSP** et l'application, les graphiques et la
 documentation fonctionnent avec les en-têtes en place.
 
-> **À votre charge.** En HTTP simple sur le réseau local, le mot de passe circule
-> en clair : pour un accès hors LAN, placez l'application derrière HTTPS et
-> activez `ADMIN_COOKIE_SECURE=true`. Une archive de sauvegarde contient les
+> **Choix assumé.** L'application est servie en **HTTP sur le réseau local** : le
+> mot de passe circule en clair sur ce segment, ce qui est accepté pour un usage
+> privé. En cas d'exposition hors du réseau local, il faudrait passer en HTTPS et
+> activer `ADMIN_COOKIE_SECURE=true`. Une archive de sauvegarde contient les
 > empreintes de mots de passe : conservez-la à l'abri. Enfin, révoquez une clé
 > d'API dès qu'elle n'est plus utilisée.
 
