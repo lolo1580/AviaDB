@@ -1,16 +1,25 @@
 # AviaDB
 
 Gestion de collection aviation : maquettes diecast **et** patches, dans une seule
-base. Backend **FastAPI + SQLAlchemy (SQLite)**, frontend **Vue 3 + Vite + Tailwind**,
-le tout orchestré par **Docker Compose**.
+base. Backend **FastAPI + SQLAlchemy (PostgreSQL, ou SQLite en local)**, frontend
+**Vue 3 + Vite + Tailwind**, le tout orchestré par **Docker Compose**.
 
 ## Sommaire
 
+- [Base de données](#base-de-données)
 - [Démarrage rapide](#démarrage-rapide)
 - [Développement local](#développement-local)
 - [Architecture](#architecture)
 - [Modèle de données](#modèle-de-données)
 - [API](#api)
+- [Accès & administration](#accès--administration)
+- [Sauvegarde & échange de données](#sauvegarde--échange-de-données)
+- [Devises & taux de change](#devises--taux-de-change)
+- [Autres écrans](#autres-écrans)
+- [Interface](#interface)
+- [Modales réutilisables](#modales-réutilisables)
+- [Réactivité de l'interface (mises à jour optimistes)](#réactivité-de-linterface-mises-à-jour-optimistes)
+- [Thème clair / sombre](#thème-clair--sombre)
 - [Variables d'environnement](#variables-denvironnement)
 - [Tests](#tests)
 
@@ -56,18 +65,24 @@ docker exec aviadb-db pg_dump -U aviadb aviadb | gzip > aviadb-pg.sql.gz
 ## Démarrage rapide
 
 ```bash
-docker compose up --build
+cp .env.example .env      # puis renseignez ADMIN_PASSWORD et POSTGRES_PASSWORD
+docker compose up -d --build
 ```
+
+Le fichier `docker-compose.yml` démarre trois services : **db** (PostgreSQL 18),
+**backend** (FastAPI) et **frontend** (Nginx qui sert la SPA et relaie `/api`).
 
 - Interface : <http://localhost:8080>
 - API (Swagger) : <http://localhost:8000/docs>
+- PostgreSQL : `localhost:5434` (5432 est réservé au PostgreSQL du système)
 
-Les données sont persistées dans `./data` (base SQLite + images WebP), monté en
-volume — elles survivent à `docker compose down`.
+Les objets et les comptes vivent dans le volume Docker `aviadb-pgdata` ; les images
+WebP sont dans `./data/uploads`. Les deux survivent à `docker compose down`.
 
 ```bash
 docker compose down          # arrêter
 docker compose up -d --build # reconstruire après modification
+docker compose logs -f backend
 ```
 
 ### Réseau hôte (optionnel)
@@ -87,6 +102,8 @@ Les ports 80 et 8000 doivent être libres sur l'hôte.
 
 ## Développement local
 
+Sans Docker, l'application utilise **SQLite** par défaut (aucun service à lancer).
+
 **Backend** (depuis `backend/`) :
 
 ```bash
@@ -95,7 +112,11 @@ uvicorn app.main:app --reload      # http://localhost:8000
 ```
 
 La base est créée automatiquement dans `./data/aviadb.db`, les images dans
-`./uploads/`.
+`./uploads/`. Pour travailler sur PostgreSQL :
+
+```bash
+export DATABASE_URL=postgresql+psycopg://aviadb:motdepasse@localhost:5434/aviadb
+```
 
 **Frontend** (depuis `frontend/`) :
 
@@ -112,44 +133,46 @@ Vite proxifie `/api` et `/uploads` vers `http://localhost:8000`.
 aviadb/
 ├── backend/
 │   ├── app/
-│   │   ├── database.py   # engine SQLite, session, PRAGMA foreign_keys
+│   │   ├── database.py   # engine + session, dialecte SQLite ou PostgreSQL
 │   │   ├── models.py     # tables SQLAlchemy
-│   │   ├── schemas.py    # schémas Pydantic (entrées/sorties)
+│   │   ├── schemas.py    # schémas Pydantic (entrées/sorties, gardes)
 │   │   ├── crud.py       # création d'items + résolution des tags (partagé)
 │   │   ├── currency.py   # devises, taux de change, conversions
 │   │   ├── media.py      # upload, conversion WebP, vignettes
 │   │   ├── auth.py       # comptes, rôles, jetons, require_admin
-│   │   ├── admin.py      # bulk, import/export, comptes, tags
+│   │   ├── admin.py      # bulk, import/export, comptes, tags, taux
 │   │   ├── backup.py     # sauvegarde / restauration ZIP
 │   │   ├── migrations.py # ajout idempotent des colonnes manquantes
 │   │   └── main.py       # routes FastAPI
-│   ├── tests/            # suite pytest
+│   ├── tests/            # suite pytest (conftest.py, helpers.py, 7 modules)
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── requirements-dev.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── layout/       # navItems, icons (SVG inline)
+│   │   ├── layout/       # navItems, icons (SVG inline), modalStack
 │   │   ├── components/
 │   │   │   ├── ui/       # AppModal, AppButton, ConfirmDialog, PromptDialog
-│   │   │   └── layout/   # AppShell, AppSidebar, AppTopbar, notifications, avatar
+│   │   │   ├── layout/   # AppShell, AppSidebar, AppTopbar, notifications, avatar
+│   │   │   └── …         # LoginPanel, ThemeToggle, PhotoLightbox, StatsPanel, …
 │   │   ├── views/        # Collection, Souhaits, Statistiques, Admin
-│   │   ├── components/   # LoginPanel, ThemeToggle, PhotoLightbox, StatsPanel, …
+│   │   ├── composables/  # useItemList, useConfirm, usePrompt, useFocusTrap…
 │   │   ├── auth.js       # session et rôle
 │   │   ├── settings.js   # devise de référence et taux
 │   │   ├── optimistic.js # registre des opérations + helper optimiste
 │   │   ├── toast.js      # notifications (rollback, « Réessayer »)
-│   │   ├── composables/  # useItemList : liste + mutations optimistes
+│   │   ├── notifications.js  # centre de notifications (cloche)
+│   │   ├── ui.js         # état d'interface persistant (rail, vue grille/liste)
 │   │   ├── theme.js      # thème clair/sombre (persistant)
 │   │   ├── router.js     # /, /souhaits, /statistiques, /admin
 │   │   └── api.js        # client REST
 │   ├── nginx.conf.template  # SPA + proxy /api et /uploads (BACKEND_URL)
 │   ├── Dockerfile        # multi-stage : build Vite → Nginx
 │   └── package.json
-├── .github/workflows/ci.yml  # intégration continue (pytest + build)
+├── .github/workflows/ci.yml  # intégration continue (pytest SQLite + PostgreSQL, build)
 ├── .env.example          # modèle de configuration
-├── data/                 # aviadb.db + uploads/ (volume monté)
-├── docker-compose.yml
+├── data/                 # images uploadées (la base est dans le volume Docker)
+├── docker-compose.yml    # db + backend + frontend
 └── docker-compose.host.yml   # surcharge réseau hôte
 ```
 
@@ -192,14 +215,14 @@ Toutes les routes sont préfixées par `/api`.
 | GET | `/api/health` | état du service |
 | GET | `/api/items` | lister (filtres, tri, pagination) → `{total, items}` |
 | POST | `/api/items` | créer un objet (détails + tags) |
-| GET | `/api/items/{id}` | détail |
-| PATCH / PUT | `/api/items/{id}` | mise à jour partielle (fusion imbriquée) |
-| DELETE | `/api/items/{id}` | supprimer (cascade + fichiers) |
-| GET | `/api/items/{id}/photos` | photos d'un objet |
-| POST | `/api/items/{id}/photos` | upload (`file`, `caption`, `is_primary`) |
-| PATCH | `/api/photos/{id}` | légende / photo principale |
-| POST | `/api/photos/{id}/primary` | désigner la photo principale |
-| DELETE | `/api/photos/{id}` | supprimer la photo + le fichier |
+| GET | `/api/items/{item_id}` | détail |
+| PATCH / PUT | `/api/items/{item_id}` | mise à jour partielle (fusion imbriquée) |
+| DELETE | `/api/items/{item_id}` | supprimer (cascade + fichiers) |
+| GET | `/api/items/{item_id}/photos` | photos d'un objet |
+| POST | `/api/items/{item_id}/photos` | upload (`file`, `caption`, `is_primary`) |
+| PATCH | `/api/photos/{photo_id}` | légende / photo principale |
+| POST | `/api/photos/{photo_id}/primary` | désigner la photo principale |
+| DELETE | `/api/photos/{photo_id}` | supprimer la photo + le fichier |
 | GET | `/api/stats` | compteurs, valeurs, répartitions |
 | GET | `/api/meta/facets` | valeurs distinctes pour les filtres |
 | GET | `/api/meta/enums` | valeurs d'énumération |
@@ -219,13 +242,13 @@ Toutes les routes sont préfixées par `/api`.
 | POST | `/api/admin/restore` | restauration ZIP (`mode=merge` ou `replace`) |
 | POST | `/api/admin/import` | import JSON |
 | POST | `/api/admin/import.csv` | import CSV (colonnes de l'export) |
-| POST | `/api/items/{id}/photos/reorder` | réordonner les photos |
+| POST | `/api/items/{item_id}/photos/reorder` | réordonner les photos |
 | GET | `/api/admin/users` | lister les comptes *(ADMIN)* |
 | POST | `/api/admin/users` | créer un compte *(ADMIN)* |
-| PATCH | `/api/admin/users/{id}` | rôle / mot de passe / activation *(ADMIN)* |
-| DELETE | `/api/admin/users/{id}` | supprimer un compte *(ADMIN)* |
-| PATCH | `/api/admin/tags/{id}` | renommer un tag *(ADMIN)* |
-| DELETE | `/api/admin/tags/{id}` | supprimer un tag et ses associations *(ADMIN)* |
+| PATCH | `/api/admin/users/{user_id}` | rôle / mot de passe / activation *(ADMIN)* |
+| DELETE | `/api/admin/users/{user_id}` | supprimer un compte *(ADMIN)* |
+| PATCH | `/api/admin/tags/{tag_id}` | renommer un tag *(ADMIN)* |
+| DELETE | `/api/admin/tags/{tag_id}` | supprimer un tag et ses associations *(ADMIN)* |
 
 > Toutes les routes `/api/*` et les images `/uploads/*` exigent une session admin
 > (cookie `HttpOnly` ou en-tête `Authorization: Bearer`). Seules restent publiques
@@ -274,12 +297,20 @@ Authentification : mots de passe hachés en **PBKDF2-SHA256** (stdlib), jetons
 ## Sauvegarde & échange de données
 
 - **Sauvegarder (ZIP)** : archive contenant `aviadb.json` (objets, détails, tags,
-  photos) **et** toutes les images. Un seul fichier à conserver.
-- **Restaurer (ZIP)** : l'interface demande s'il faut **fusionner** avec
-  l'existant ou **remplacer** toute la collection.
+  photos), **tous les réglages** (devise de référence, taux, cache des taux
+  historiques), **les comptes** (empreintes PBKDF2, jamais de mot de passe en
+  clair) et toutes les images. Un seul fichier à conserver — et le moyen
+  portable de changer de moteur de base de données.
+- **Restaurer (ZIP)** : l'interface propose **remplacer** la collection ou
+  **fusionner** avec l'existant. Les comptes déjà présents ne sont jamais
+  écrasés (on ne se verrouille pas dehors) ; les autres sont recréés.
 - **Export / import JSON** et **export / import CSV** (colonnes identiques, donc
   aller-retour possible avec un tableur).
-- **Export CSV** : colonnes plates, une ligne par objet.
+- **Sauvegarde au niveau PostgreSQL** :
+
+  ```bash
+  docker exec aviadb-db pg_dump -U aviadb aviadb | gzip > aviadb-pg.sql.gz
+  ```
 
 ## Devises & taux de change
 
@@ -416,6 +447,7 @@ l'interface entre thème clair et sombre.
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./data/aviadb.db` | URL SQLAlchemy (PostgreSQL ou SQLite) |
+| `POSTGRES_PASSWORD` | `change-me` | mot de passe du conteneur `db` |
 | `UPLOAD_DIR` | `./uploads` | dossier des images |
 | `IMAGE_MAX_DIMENSION` | `1600` | taille max de l'image principale (px) |
 | `IMAGE_THUMB_DIMENSION` | `480` | taille max de la vignette (px) |
@@ -431,29 +463,41 @@ l'interface entre thème clair et sombre.
 | `ADMIN_COOKIE_SECURE` | `false` | passe le cookie en `Secure` (à activer en HTTPS) |
 | `ADMIN_MAX_FAILURES` | `10` | tentatives de connexion avant blocage temporaire |
 
-En Compose, `ADMIN_PASSWORD` vaut `change-me` par défaut ; surchargez-le via un
-fichier `.env` (voir `.env.example`).
+Ces valeurs sont lues depuis le fichier `.env` (voir `.env.example`), qui n'est
+**jamais versionné**. Copie du fichier :
 
-En Compose, `DATABASE_URL` et `UPLOAD_DIR` pointent vers `/app/data`, monté sur
-`./data` de l'hôte.
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+En Compose, `DATABASE_URL` vise le service `db` (`db:5432` en réseau bridge,
+`127.0.0.1:5434` en réseau hôte) et `UPLOAD_DIR` pointe vers `/app/data/uploads`,
+monté sur `./data` de l'hôte.
 
 ## Tests
 
 ```bash
 cd backend
 pip install -r requirements-dev.txt
-pytest
+pytest                    # sur SQLite (aucun service requis)
+
+# ou sur PostgreSQL :
+DATABASE_URL=postgresql+psycopg://aviadb:test@localhost:5432/aviadb_test pytest
 ```
 
-La suite (`backend/tests/`, 64 tests) couvre le CRUD, la validation, la cascade,
-l'upload WebP et les vignettes, l'ordre des photos, les filtres, les
-statistiques, les devises et taux de change, l'authentification et les rôles,
-les actions en masse, l'import/export JSON et CSV, la sauvegarde/restauration et
-le mode sans protection. Aucun test ne fait d'appel réseau (le fournisseur de
-taux est simulé).
+La suite (`backend/tests/`, **67 tests**) couvre le CRUD, la validation (dont les
+dates invalides), la cascade, l'upload WebP et les vignettes, l'ordre des photos,
+les filtres, les statistiques et les graphiques, les devises et taux de change,
+l'authentification et les rôles, les actions en masse, l'import/export JSON et
+CSV, la sauvegarde/restauration (objets, réglages et comptes) et le mode sans
+protection. **Aucun test ne fait d'appel réseau** : le fournisseur de taux est
+simulé et un garde-fou fait échouer toute tentative.
 
-L'intégration continue (`.github/workflows/ci.yml`) lance `pytest` et le build du
-frontend à chaque push et pull request.
+L'intégration continue (`.github/workflows/ci.yml`) lance trois jobs à chaque push
+et pull request : `backend` (pytest sur SQLite), `backend-postgres` (la même suite
+sur PostgreSQL, ce qui détecte les requêtes propres à un moteur) et `frontend`
+(build Vite).
 
 > Note : le conteneur backend tourne en `root`, les fichiers de `./data` sont donc
 > créés avec l'UID root sur l'hôte.
