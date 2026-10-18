@@ -6,6 +6,7 @@ import { confirm as askConfirm } from '../composables/useConfirm'
 import { prompt as askPrompt } from '../composables/usePrompt'
 import { ATTACHMENT_LABEL, MATERIAL_LABEL, SHAPE_LABEL, STATUS_LABEL, TYPE_LABEL } from '../labels'
 import { settings } from '../settings'
+import { classes, flattenedClasses } from '../classes'
 import AppModal from './ui/AppModal.vue'
 import AppButton from './ui/AppButton.vue'
 import PhotoLightbox from './PhotoLightbox.vue'
@@ -38,6 +39,7 @@ const form = reactive({
   notes: '',
   tags: '',
   currency: '',
+  class_id: '',
   diecast: { scale: '', manufacturer: '', part_number: '', registration_number: '', configuration: '' },
   patch: { unit_squadron: '', base: '', material: '', attachment_type: '', shape: '', event_or_mission: '' },
 })
@@ -54,6 +56,8 @@ function toNum(value) {
   const n = Number(value)
   return Number.isNaN(n) ? null : n
 }
+
+const classOptions = computed(() => flattenedClasses())
 
 const currencyOptions = computed(() =>
   settings.currencies.length
@@ -86,6 +90,7 @@ async function initialize() {
     notes: '',
     tags: '',
     currency: settings.default_currency,
+    class_id: '',
     diecast: { scale: '', manufacturer: '', part_number: '', registration_number: '', configuration: '' },
     patch: { unit_squadron: '', base: '', material: '', attachment_type: '', shape: '', event_or_mission: '' },
   })
@@ -106,6 +111,7 @@ async function initialize() {
     notes: it.notes ?? '',
     tags: (it.tags || []).map((tag) => tag.name).join(', '),
     currency: it.currency ?? settings.default_currency,
+    class_id: it.class_id ?? '',
   })
   if (it.diecast) Object.assign(form.diecast, it.diecast)
   if (it.patch) Object.assign(form.patch, it.patch)
@@ -139,6 +145,7 @@ function buildPayload() {
     purchase_price: toNum(form.purchase_price),
     estimated_value: toNum(form.estimated_value),
     currency: form.currency || settings.default_currency,
+    class_id: form.class_id === '' || form.class_id === null ? null : Number(form.class_id),
     notes: form.notes || null,
     tags: form.tags.split(',').map((s) => s.trim()).filter(Boolean),
     diecast: null,
@@ -371,6 +378,16 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
         <label class="flex flex-col gap-1">
           <span :class="labelClass">Tags (séparés par des virgules)</span>
           <input v-model="form.tags" :class="inputClass" placeholder="Tiger Meet, Marine" />
+        </label>
+
+        <label class="flex flex-col gap-1">
+          <span :class="labelClass">Classe</span>
+          <select v-model="form.class_id" :class="inputClass">
+            <option value="">— Aucune —</option>
+            <option v-for="node in classOptions" :key="node.id" :value="node.id">
+              {{ '— '.repeat(node.depth) }}{{ node.name }}
+            </option>
+          </select>
         </label>
 
         <label class="flex flex-col gap-1">

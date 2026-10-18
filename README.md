@@ -120,7 +120,9 @@ aviadb/
 │   │   ├── database.py   # engine PostgreSQL, session, pool_pre_ping
 │   │   ├── models.py     # tables SQLAlchemy
 │   │   ├── schemas.py    # schémas Pydantic (entrées/sorties, gardes)
-│   │   ├── crud.py       # création d'items + résolution des tags (partagé)
+│   │   ├── crud.py       # création d'items, tags, helpers de classes (partagé)
+│   │   ├── stats.py      # calcul des agrégats (interface + API publique)
+│   │   ├── api_keys.py   # clés d'API et route publique /api/public/stats
 │   │   ├── currency.py   # devises, taux de change, conversions
 │   │   ├── media.py      # upload, conversion WebP, vignettes
 │   │   ├── auth.py       # comptes, rôles, jetons, require_admin
@@ -143,6 +145,7 @@ aviadb/
 │   │   ├── composables/  # useItemList, useConfirm, usePrompt, useFocusTrap…
 │   │   ├── auth.js       # session et rôle
 │   │   ├── settings.js   # devise de référence et taux
+│   │   ├── classes.js    # arborescence des classes (arbre, chemins)
 │   │   ├── optimistic.js # registre des opérations + helper optimiste
 │   │   ├── toast.js      # notifications (rollback, « Réessayer »)
 │   │   ├── notifications.js  # centre de notifications (cloche)
@@ -171,14 +174,18 @@ via des tables d'attributs spécifiques :
    ├── [diecast_details]   1-to-1 optionnel
    ├── [patch_details]     1-to-1 optionnel
    ├── [item_photos]       1-to-N
+   ├── [classes]           N-to-1 (arborescente : classe → sous-classe)
    └── [tags]              N-to-N (via item_tags)
 ```
+
+Tables annexes : `users` (comptes), `settings` (devise de référence, taux),
+`api_keys` (clés d'accès à l'API publique).
 
 `items` : `name`, `item_type` (DIECAST/PATCH/OTHER), `country`, `aircraft_model`,
 `storage_location`, `status` (EXHIBITED/STORED_BOX/WANTED/TRANSIT),
 `purchase_date`, `purchase_price`, `estimated_value`, `currency`,
 `purchase_eur_value` (prix d'achat figé en EUR au taux du jour d'achat),
-`purchase_rate_date`, `notes`, `created_at`, `updated_at`.
+`purchase_rate_date`, `class_id`, `notes`, `created_at`, `updated_at`.
 
 `diecast_details` : `scale`, `manufacturer`, `part_number`, `registration_number`,
 `configuration`.
@@ -234,6 +241,15 @@ FastAPI expose aussi ses propres pages sur le port 8000 : `/docs` (Swagger UI) e
 | GET | `/api/meta/facets` | valeurs distinctes pour les filtres |
 | GET | `/api/meta/enums` | valeurs d'énumération |
 | GET | `/api/tags` | vocabulaire de tags |
+| GET | `/api/classes` | arborescence des classes (liste plate + `parent_id`) |
+| POST | `/api/admin/classes` | créer une classe ou une sous-classe *(ADMIN)* |
+| PATCH | `/api/admin/classes/{class_id}` | renommer / déplacer une classe *(ADMIN)* |
+| DELETE | `/api/admin/classes/{class_id}` | supprimer la classe et sa descendance (`?force=true` si utilisée) *(ADMIN)* |
+| GET | `/api/admin/api-keys` | lister les clés d'API *(ADMIN)* |
+| POST | `/api/admin/api-keys` | générer une clé (renvoyée en clair une seule fois) *(ADMIN)* |
+| PATCH | `/api/admin/api-keys/{key_id}` | libellé / activation *(ADMIN)* |
+| DELETE | `/api/admin/api-keys/{key_id}` | révoquer une clé *(ADMIN)* |
+| GET | `/api/public/stats` | **métriques agrégées**, via `X-API-Key` (ou `?api_key=`) |
 | GET | `/uploads/...` | images (statique) |
 | POST | `/api/admin/login` | connexion (`username` + `password`) → cookie HttpOnly + token |
 | POST | `/api/admin/logout` | déconnexion |
@@ -300,8 +316,10 @@ onglet retenu d'une visite à l'autre) :
 |---|---|
 | **Objets** | recherche et filtres, tableau dense, statut modifiable par ligne, sélection multiple (supprimer, statut, tags), création, export/import JSON et CSV |
 | **Tags** | vocabulaire : renommer (répercuté sur tous les objets) ou supprimer |
+| **Classes** | arborescence de classement (classe → sous-classe → …) : créer une racine ou une sous-classe, renommer, supprimer. Filtrer sur une classe inclut sa descendance |
 | **Devises & taux** | devise de référence, actualisation BCE, correction manuelle des taux. Seules les devises **utilisées par la collection** sont affichées — une case à cocher révèle les 25 devises, un champ filtre la liste |
 | **Comptes** | création, rôle (administrateur / lecteur), activation, mot de passe, suppression *(administrateur)* |
+| **API** | clés d'accès aux métriques publiques : création (la clé n'est affichée qu'une fois), désactivation, révocation, suivi des appels *(administrateur)* |
 | **Sauvegarde** | archive ZIP complète, restauration (remplacer / fusionner), commande `pg_dump`, lien vers la documentation d'API |
 
 Les statistiques de la collection sont dans **Collection**, pas dans l'administration.
@@ -353,6 +371,45 @@ exprimer tous les totaux, graphiques et budgets.
 1 EUR = 1,1253 USD   →  110 USD ≈ 97,75 €
 Prix d'achat du 01/05/2024 en USD : taux du 30/04/2024 → figé
 ```
+
+## Classes (arborescence) et API publique
+
+### Classes
+
+Un second axe de classement, hiérarchique, à côté des tags :
+
+```
+Aéronefs
+└── Chasseur
+    └── Rafale
+Écussons
+└── Escadron de chasse
+```
+
+- géré dans **Administration → Classes** (racine, sous-classe, renommer, supprimer) ;
+- chaque objet peut être rattaché à une classe ; le filtre de la collection porte sur
+  la classe **et toute sa descendance** ;
+- le chemin complet s'affiche sur les cartes, dans le tableau et dans le panneau latéral ;
+- supprimer une classe utilisée demande confirmation : les objets sont conservés et
+  simplement laissés sans classe.
+
+### API publique (clés)
+
+Pour exposer quelques chiffres sur un site externe, sans donner de compte :
+
+```bash
+curl -H "X-API-Key: aviadb_…" https://<hote>/api/public/stats
+# ou, pour un widget : /api/public/stats?api_key=aviadb_…
+```
+
+- une clé se crée dans **Administration → API** et **n'est affichée qu'une seule fois**
+  (seule son empreinte SHA-256 est stockée) ;
+- elle ne donne accès **qu'aux métriques agrégées** : compteurs, valeurs totales,
+  répartitions par type, pays, échelle, statut, classe, année. **Aucun nom d'objet,
+  aucun prix unitaire, aucun emplacement** ;
+- désactivation et révocation immédiates ; nombre d'appels et date du dernier appel
+  sont affichés ;
+- les autres routes restent fermées : sans clé, `/api/public/stats` répond `401`.
 
 ## Autres écrans
 
@@ -518,13 +575,14 @@ pytest                     # utilise par défaut la base ci-dessus
 DATABASE_URL=postgresql+psycopg://aviadb:test@localhost:5432/aviadb_test pytest
 ```
 
-La suite (`backend/tests/`, **67 tests**) couvre le CRUD, la validation (dont les
+La suite (`backend/tests/`, **81 tests**) couvre le CRUD, la validation (dont les
 dates invalides), la cascade, l'upload WebP et les vignettes, l'ordre des photos,
-les filtres, les statistiques et les graphiques, les devises et taux de change,
-l'authentification et les rôles, les actions en masse, l'import/export JSON et
-CSV, la sauvegarde/restauration (objets, réglages et comptes) et le mode sans
-protection. **Aucun test ne fait d'appel réseau** : le fournisseur de taux est
-simulé et un garde-fou fait échouer toute tentative.
+les filtres (y compris par classe et sa descendance), les statistiques et les
+graphiques, les devises et taux de change, les classes hiérarchiques,
+l'authentification et les rôles, les clés d'API et la route publique, les actions
+en masse, l'import/export JSON et CSV, la sauvegarde/restauration (objets, réglages
+et comptes) et le mode sans protection. **Aucun test ne fait d'appel réseau** : le
+fournisseur de taux est simulé et un garde-fou fait échouer toute tentative.
 
 Chaque test repart d'un schéma vide (`drop_all` / `create_all`), d'où une
 exécution d'une minute environ.

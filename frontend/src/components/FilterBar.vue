@@ -1,5 +1,7 @@
 <script setup>
+import { computed } from 'vue'
 import { STATUS_LABEL, TYPE_LABEL } from '../labels'
+import { classes, flattenedClasses } from '../classes'
 
 const props = defineProps({
   filters: { type: Object, required: true },
@@ -7,6 +9,8 @@ const props = defineProps({
   enums: { type: Object, default: null },
   total: { type: Number, default: 0 },
 })
+
+const classOptions = computed(() => flattenedClasses())
 
 const SORTS = [
   { value: 'name', label: 'Nom' },
@@ -24,6 +28,11 @@ const selectClass =
 // Les filtres sont des tableaux côté API : un select simple en met 0 ou 1.
 function setSingle(key, value) {
   props.filters[key] = value ? [value] : []
+}
+
+/** La classe est un filtre simple (et englobe sa descendance côté serveur). */
+function setClass(value) {
+  props.filters.class_id = value === '' ? '' : Number(value)
 }
 
 function toggle(key, value) {
@@ -103,6 +112,20 @@ function reset() {
         >
           <option value="">Tous</option>
           <option v-for="m in facets.manufacturers" :key="m" :value="m">{{ m }}</option>
+        </select>
+      </label>
+
+      <label v-if="classOptions.length" class="flex flex-col gap-1">
+        <span :class="labelClass">Classe</span>
+        <select
+          :value="filters.class_id === '' || filters.class_id === undefined ? '' : String(filters.class_id)"
+          :class="selectClass"
+          @change="setClass($event.target.value)"
+        >
+          <option value="">Toutes</option>
+          <option v-for="node in classOptions" :key="node.id" :value="node.id">
+            {{ '— '.repeat(node.depth) }}{{ node.name }}
+          </option>
         </select>
       </label>
 

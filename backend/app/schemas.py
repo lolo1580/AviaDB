@@ -119,6 +119,7 @@ class ItemBase(DateGuard):
     purchase_price: float | None = Field(None, ge=0)
     estimated_value: float | None = Field(None, ge=0)
     currency: str | None = Field(None, min_length=3, max_length=3)
+    class_id: int | None = None
     notes: str | None = None
     loaned_to: str | None = Field(None, max_length=120)
     loan_date: date | None = None
@@ -144,6 +145,7 @@ class ItemUpdate(DateGuard):
     purchase_price: float | None = Field(None, ge=0)
     estimated_value: float | None = Field(None, ge=0)
     currency: str | None = Field(None, min_length=3, max_length=3)
+    class_id: int | None = None
     notes: str | None = None
     loaned_to: str | None = Field(None, max_length=120)
     loan_date: date | None = None
@@ -165,6 +167,7 @@ class ItemOut(ORMModel):
     purchase_price: float | None = None
     estimated_value: float | None = None
     currency: str | None = None
+    class_id: int | None = None
     purchase_eur_value: float | None = None
     purchase_rate_date: date | None = None
     notes: str | None = None
@@ -209,6 +212,7 @@ class StatsOut(BaseModel):
     by_scale: list[CountBucket]
     by_manufacturer: list[CountBucket]
     by_material: list[CountBucket]
+    by_class: list[CountBucket]
     by_year: list[CountBucket]
     value_by_country: list[ValueBucket]
 
@@ -328,3 +332,53 @@ class ImportResultOut(BaseModel):
 
 class TagUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
+
+
+# --------------------------------------------------------------------------- #
+# Classes (arborescence)
+# --------------------------------------------------------------------------- #
+class ClassIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    parent_id: int | None = None
+
+
+class ClassUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=80)
+    parent_id: int | None = None
+
+
+class ClassOut(ORMModel):
+    id: int
+    name: str
+    parent_id: int | None = None
+    position: int = 0
+    item_count: int = 0
+
+
+# --------------------------------------------------------------------------- #
+# Clés d'API
+# --------------------------------------------------------------------------- #
+class ApiKeyIn(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+
+
+class ApiKeyUpdate(BaseModel):
+    label: str | None = Field(None, min_length=1, max_length=120)
+    is_active: bool | None = None
+
+
+class ApiKeyOut(ORMModel):
+    id: int
+    label: str
+    prefix: str
+    is_active: bool
+    created_at: datetime
+    last_used_at: datetime | None = None
+    request_count: int = 0
+
+
+class ApiKeyCreated(BaseModel):
+    """Réponse de création : la clé en clair n'est renvoyée qu'ici."""
+
+    key: str
+    api_key: ApiKeyOut

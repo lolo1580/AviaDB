@@ -18,8 +18,9 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import admin, auth, crud, currency, media, migrations, models, schemas
+from . import admin, api_keys, auth, crud, currency, media, migrations, models, schemas
 from .database import Base, SessionLocal, engine, get_db
+from .stats import compute_stats
 
 # Raccourci : toutes les routes d'écriture exigent un admin authentifié.
 # Les routes GET (consultation) restent publiques.
@@ -60,6 +61,8 @@ _PUBLIC_PATHS = {
     "/api/admin/login",
     "/api/admin/session",
 }
+# Les routes publiques s'authentifient par clé d'API, pas par session.
+_PUBLIC_PREFIXES = ("/api/public/",)
 _PROTECTED_PREFIXES = ("/api/", "/uploads/")
 _PROTECTED_EXACT = {"/docs", "/redoc", "/openapi.json"}
 
@@ -74,8 +77,13 @@ async def _enforce_auth(request: Request, call_next):
 
     path = request.url.path
     is_protected = path in _PROTECTED_EXACT or path.startswith(_PROTECTED_PREFIXES)
+    is_public = (
+        path in _PUBLIC_PATHS
+        or path.startswith(_PUBLIC_PREFIXES)
+        or request.method == "OPTIONS"
+    )
 
-    if is_protected and path not in _PUBLIC_PATHS and request.method != "OPTIONS":
+    if is_protected and not is_public:
         token = auth.token_from(
             request.headers.get("authorization"),
             request.cookies.get(auth.COOKIE_NAME),
@@ -104,9 +112,10 @@ app.add_middleware(
 media.ensure_upload_dir()
 app.mount("/uploads", StaticFiles(directory=media.UPLOAD_DIR), name="uploads")
 
-# Authentification admin (login/logout/session) et routes d'administration.
+# Authentification admin (login/logout/session), routes d'administration et API publique.
 app.include_router(auth.router)
 app.include_router(admin.router)
+app.include_router(api_keys.router)
 
 
 # --------------------------------------------------------------------------- #
@@ -186,6 +195,7 @@ def _build_filters(
     value_min: float | None,
     value_max: float | None,
     has_loan: bool | None,
+    class_ids: list[int] | None = None,
 ):
     """Traduit les paramètres de requête en conditions SQL + jointures nécessaires."""
     conditions = []
@@ -242,6 +252,9 @@ def _build_filters(
     elif has_loan is False:
         conditions.append(models.Item.loaned_to.is_(None))
 
+    if class_ids:
+        conditions.append(models.Item.class_id.in_(class_ids))
+
     return conditions, need_diecast, need_patch, bool(tags)
 
 
@@ -286,6 +299,7 @@ def list_items(
     value_min: float | None = Query(None, ge=0),
     value_max: float | None = Query(None, ge=0),
     has_loan: bool | None = Query(None, description="true = prêtés, false = sur place"),
+    class_id: int | None = Query(None, description="Classe et ses sous-classes"),
     sort: Literal[
         "name",
         "country",
@@ -301,6 +315,11 @@ def list_items(
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
+    # Une classe englobe toujours sa descendance.
+    class_ids = None
+    if class_id is not None:
+        class_ids = sorted(crud.class_descendant_ids(crud.all_classes(db), class_id))
+
     conditions, need_diecast, need_patch, need_tags = _build_filters(
         q=q,
         item_types=item_type,
@@ -314,6 +333,7 @@ def list_items(
         value_min=value_min,
         value_max=value_max,
         has_loan=has_loan,
+        class_ids=class_ids,
     )
 
     total = db.scalar(
@@ -568,170 +588,10 @@ def reorder_photos(item_id: int, payload: schemas.PhotoReorderIn, db: Session = 
 # --------------------------------------------------------------------------- #
 # Statistiques du dashboard (Étape 3)
 # --------------------------------------------------------------------------- #
-def _buckets(rows) -> list[schemas.CountBucket]:
-    return [
-        schemas.CountBucket(key=str(key.value if hasattr(key, "value") else key), count=count)
-        for key, count in rows
-        if key is not None
-    ]
-
-
-def _currency_buckets(db: Session, base: str) -> list[schemas.CountBucket]:
-    """Répartition par devise.
-
-    Le regroupement se fait sur la colonne brute puis la devise par défaut est
-    appliquée côté Python : `GROUP BY coalesce(colonne, :parametre)` est refusé
-    par PostgreSQL (l'expression du SELECT et celle du GROUP BY portent des
-    paramètres liés distincts).
-    """
-    counts: dict[str, int] = {}
-    for code, count in db.execute(
-        select(models.Item.currency, func.count()).group_by(models.Item.currency)
-    ).all():
-        key = (code or base).upper()
-        counts[key] = counts.get(key, 0) + count
-    return [
-        schemas.CountBucket(key=key, count=count) for key, count in sorted(counts.items())
-    ]
-
-
 @app.get("/api/stats", response_model=schemas.StatsOut, tags=["stats"])
 def stats(db: Session = Depends(get_db)):
-    total_items = db.scalar(select(func.count()).select_from(models.Item)) or 0
-    total_photos = db.scalar(select(func.count()).select_from(models.ItemPhoto)) or 0
-
-    base = currency.get_base_currency(db)
-    rates = currency.get_rates(db)
-
-    # Valeur estimée : conversion depuis la devise de chaque objet, aux taux courants
-    estimated_rows = db.execute(
-        select(models.Item.currency, func.sum(models.Item.estimated_value))
-        .where(models.Item.estimated_value.isnot(None))
-        .group_by(models.Item.currency)
-    ).all()
-    total_estimated = sum(
-        currency.to_base(float(total or 0.0), code, base, rates)
-        for code, total in estimated_rows
-    )
-
-    # Prix d'achat : équivalent EUR figé à la date d'achat, puis converti en base
-    purchase_rows = db.execute(
-        select(
-            models.Item.currency,
-            models.Item.purchase_eur_value,
-            models.Item.purchase_price,
-        ).where(models.Item.purchase_price.isnot(None))
-    ).all()
-    total_eur = 0.0
-    for code, eur_value, price in purchase_rows:
-        if eur_value is None:
-            # Objet antérieur à la gestion des devises : conversion au taux courant
-            eur_value = currency.to_eur(float(price), code, rates)
-        total_eur += float(eur_value)
-    total_purchase = total_eur * rates.get(base, 1.0)
-
-    with_value = db.scalar(
-        select(func.count())
-        .select_from(models.Item)
-        .where(models.Item.estimated_value.isnot(None))
-    ) or 0
-
-    by_type = _buckets(
-        db.execute(
-            select(models.Item.item_type, func.count()).group_by(models.Item.item_type)
-        ).all()
-    )
-    by_status = _buckets(
-        db.execute(
-            select(models.Item.status, func.count()).group_by(models.Item.status)
-        ).all()
-    )
-    by_country = _buckets(
-        db.execute(
-            select(models.Item.country, func.count())
-            .where(models.Item.country.isnot(None))
-            .group_by(models.Item.country)
-            .order_by(func.count().desc(), models.Item.country)
-            .limit(20)
-        ).all()
-    )
-    by_scale = _buckets(
-        db.execute(
-            select(models.DiecastDetails.scale, func.count())
-            .where(models.DiecastDetails.scale.isnot(None))
-            .group_by(models.DiecastDetails.scale)
-            .order_by(func.count().desc(), models.DiecastDetails.scale)
-        ).all()
-    )
-    by_manufacturer = _buckets(
-        db.execute(
-            select(models.DiecastDetails.manufacturer, func.count())
-            .where(models.DiecastDetails.manufacturer.isnot(None))
-            .group_by(models.DiecastDetails.manufacturer)
-            .order_by(func.count().desc(), models.DiecastDetails.manufacturer)
-            .limit(20)
-        ).all()
-    )
-    by_material = _buckets(
-        db.execute(
-            select(models.PatchDetails.material, func.count())
-            .where(models.PatchDetails.material.isnot(None))
-            .group_by(models.PatchDetails.material)
-            .order_by(func.count().desc())
-        ).all()
-    )
-
-    # Années d'achat (PostgreSQL : extraction de l'année)
-    year_column = func.to_char(models.Item.purchase_date, "YYYY")
-    by_year = _buckets(
-        db.execute(
-            select(year_column, func.count())
-            .where(models.Item.purchase_date.isnot(None))
-            .group_by(year_column)
-            .order_by(year_column)
-        ).all()
-    )
-
-    # Valeur estimée cumulée par pays, convertie dans la devise de référence
-    value_rows = db.execute(
-        select(models.Item.country, models.Item.currency, func.sum(models.Item.estimated_value))
-        .where(models.Item.country.isnot(None), models.Item.estimated_value.isnot(None))
-        .group_by(models.Item.country, models.Item.currency)
-    ).all()
-    country_totals: dict[str, float] = {}
-    for country, code, total in value_rows:
-        if country is None:
-            continue
-        country_totals[country] = country_totals.get(country, 0.0) + currency.to_base(
-            float(total or 0.0), code, base, rates
-        )
-    value_by_country = [
-        schemas.ValueBucket(key=country, value=round(value, 2))
-        for country, value in sorted(
-            country_totals.items(), key=lambda pair: pair[1], reverse=True
-        )[:20]
-    ]
-
-    by_currency = _currency_buckets(db, base)
-
-    return schemas.StatsOut(
-        total_items=total_items,
-        total_photos=total_photos,
-        base_currency=base,
-        rates_updated_at=currency.get_rates_meta(db)["rates_updated_at"],
-        total_estimated_value=round(total_estimated, 2),
-        total_purchase_value=round(total_purchase, 2),
-        items_with_estimated_value=with_value,
-        by_type=by_type,
-        by_status=by_status,
-        by_country=by_country,
-        by_currency=by_currency,
-        by_scale=by_scale,
-        by_manufacturer=by_manufacturer,
-        by_material=by_material,
-        by_year=by_year,
-        value_by_country=value_by_country,
-    )
+    """Compteurs, valeurs et répartitions (devise de référence)."""
+    return compute_stats(db)
 
 
 @app.get("/api/meta/facets", response_model=schemas.FacetsOut, tags=["meta"])
@@ -761,3 +621,31 @@ def facets(db: Session = Depends(get_db)):
 @app.get("/api/tags", response_model=list[schemas.TagOut], tags=["tags"])
 def list_tags(db: Session = Depends(get_db)):
     return list(db.scalars(select(models.Tag).order_by(models.Tag.name)).all())
+
+
+# --------------------------------------------------------------------------- #
+# Classes (arborescence)
+# --------------------------------------------------------------------------- #
+@app.get("/api/classes", response_model=list[schemas.ClassOut], tags=["classes"])
+def list_classes(db: Session = Depends(get_db)):
+    """Toutes les classes, aplaties, avec le nombre d'objets de chacune.
+
+    L'arborescence est reconstruite par le client à partir de `parent_id`.
+    """
+    counts = dict(
+        db.execute(
+            select(models.ItemClass.id, func.count(models.Item.id))
+            .join(models.Item, models.Item.class_id == models.ItemClass.id, isouter=True)
+            .group_by(models.ItemClass.id)
+        ).all()
+    )
+    return [
+        schemas.ClassOut(
+            id=node.id,
+            name=node.name,
+            parent_id=node.parent_id,
+            position=node.position,
+            item_count=counts.get(node.id, 0),
+        )
+        for node in crud.all_classes(db)
+    ]

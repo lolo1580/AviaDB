@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { coverPhoto, photoUrl } from '../api'
+import { classPath } from '../classes'
 import { STATUS_BADGE, STATUS_LABEL, TYPE_BADGE, TYPE_LABEL, formatMoney } from '../labels'
 import AppIcon from './layout/AppIcon.vue'
 
@@ -11,6 +12,7 @@ const props = defineProps({
 defineEmits(['edit'])
 
 const cover = computed(() => coverPhoto(props.item))
+const classLabel = computed(() => classPath(props.item.class_id))
 const specifics = computed(() => {
   const it = props.item
   if (it.item_type === 'DIECAST' && it.diecast) {
@@ -57,6 +59,7 @@ const specifics = computed(() => {
       <div class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
         <span v-if="item.country">{{ item.country }}</span>
         <span v-if="specifics">{{ specifics }}</span>
+        <span v-if="classLabel" class="truncate text-sky-700 dark:text-sky-400">{{ classLabel }}</span>
         <span v-for="tag in item.tags.slice(0, 3)" :key="tag.id" class="truncate">{{ tag.name }}</span>
       </div>
     </div>

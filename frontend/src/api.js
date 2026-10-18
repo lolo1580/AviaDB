@@ -61,6 +61,19 @@ export const api = {
   updateRates: (rates) => request('/api/admin/rates', { method: 'PUT', body: { rates } }),
   refreshRates: () => request('/api/admin/rates/refresh', { method: 'POST' }),
 
+  // Classes (arborescence)
+  getClasses: () => request('/api/classes'),
+  createClass: (data) => request('/api/admin/classes', { method: 'POST', body: data }),
+  updateClass: (id, data) => request(`/api/admin/classes/${id}`, { method: 'PATCH', body: data }),
+  deleteClass: (id, force = false) =>
+    request(`/api/admin/classes/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+
+  // Clés d'API
+  listApiKeys: () => request('/api/admin/api-keys'),
+  createApiKey: (label) => request('/api/admin/api-keys', { method: 'POST', body: { label } }),
+  updateApiKey: (id, data) => request(`/api/admin/api-keys/${id}`, { method: 'PATCH', body: data }),
+  deleteApiKey: (id) => request(`/api/admin/api-keys/${id}`, { method: 'DELETE' }),
+
   listPhotos: (itemId) => request(`/api/items/${itemId}/photos`),
   uploadPhoto: (itemId, file, { caption = '', isPrimary = false } = {}) => {
     const fd = new FormData()

@@ -62,3 +62,47 @@ def create_item(db: Session, payload: schemas.ItemCreate) -> models.Item:
     apply_amounts(db, item)
     db.add(item)
     return item
+
+
+# --------------------------------------------------------------------------- #
+# Classes (arborescence)
+# --------------------------------------------------------------------------- #
+def all_classes(db: Session) -> list[models.ItemClass]:
+    """Toutes les classes, triées pour un affichage hiérarchique stable."""
+    return list(
+        db.scalars(
+            select(models.ItemClass).order_by(
+                models.ItemClass.position, models.ItemClass.name
+            )
+        ).all()
+    )
+
+
+def class_descendant_ids(classes: list[models.ItemClass], root_id: int) -> set[int]:
+    """Identifiants de `root_id` et de toute sa descendance."""
+    children: dict[int | None, list[int]] = {}
+    for node in classes:
+        children.setdefault(node.parent_id, []).append(node.id)
+
+    found: set[int] = set()
+    pending = [root_id]
+    while pending:
+        current = pending.pop()
+        if current in found:
+            continue
+        found.add(current)
+        pending.extend(children.get(current, []))
+    return found
+
+
+def class_path(classes_by_id: dict[int, models.ItemClass], class_id: int | None) -> list[str]:
+    """Chemin lisible (« Aéronefs › Chasseur › Rafale ») d'une classe."""
+    names: list[str] = []
+    seen: set[int] = set()
+    current = class_id
+    while current is not None and current in classes_by_id and current not in seen:
+        seen.add(current)
+        node = classes_by_id[current]
+        names.append(node.name)
+        current = node.parent_id
+    return list(reversed(names))

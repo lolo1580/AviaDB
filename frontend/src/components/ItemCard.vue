@@ -2,11 +2,13 @@
 import { computed } from 'vue'
 import { TYPE_LABEL, TYPE_BADGE, STATUS_LABEL, STATUS_BADGE, formatMoney } from '../labels'
 import { coverPhoto, photoUrl } from '../api'
+import { classPath } from '../classes'
 
 const props = defineProps({ item: { type: Object, required: true } })
 defineEmits(['edit'])
 
 const cover = computed(() => coverPhoto(props.item))
+const classLabel = computed(() => classPath(props.item.class_id))
 
 const specifics = computed(() => {
   const it = props.item
@@ -62,6 +64,12 @@ const specifics = computed(() => {
           class="rounded bg-slate-100 px-1.5 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
         >
           {{ tag }}
+        </span>
+        <span
+          v-if="classLabel"
+          class="rounded bg-sky-50 px-1.5 py-0.5 text-sky-700 ring-1 ring-inset ring-sky-600/20 dark:bg-sky-950 dark:text-sky-300 dark:ring-sky-400/30"
+        >
+          {{ classLabel }}
         </span>
       </div>
 

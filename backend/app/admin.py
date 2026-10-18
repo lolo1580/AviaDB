@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import auth, backup, crud, currency, media, models, schemas
+from . import api_keys, auth, backup, crud, currency, media, models, schemas
 from .database import get_db
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -519,5 +519,202 @@ def delete_tag(tag_id: int, db: Session = Depends(get_db)):
 
     db.execute(sa_delete(models.item_tags).where(models.item_tags.c.tag_id == tag_id))
     db.delete(tag)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------- #
+# Classes (arborescence) — ADMIN
+# --------------------------------------------------------------------------- #
+def _get_class_or_404(db: Session, class_id: int) -> models.ItemClass:
+    node = db.get(models.ItemClass, class_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Classe {class_id} introuvable")
+    return node
+
+
+def _ensure_unique_name(
+    db: Session, name: str, parent_id: int | None, *, exclude_id: int | None = None
+) -> None:
+    """Une même fratrie ne peut pas contenir deux fois le même nom.
+
+    Vérifié côté application : PostgreSQL considère deux `NULL` comme distincts,
+    une contrainte d'unicité laisserait donc passer deux classes racines homonymes.
+    """
+    statement = select(models.ItemClass).where(
+        models.ItemClass.name == name,
+        models.ItemClass.parent_id.is_(None) if parent_id is None else models.ItemClass.parent_id == parent_id,
+    )
+    if exclude_id is not None:
+        statement = statement.where(models.ItemClass.id != exclude_id)
+    if db.scalars(statement).first() is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"« {name} » existe déjà à ce niveau")
+
+
+@router.post(
+    "/classes",
+    response_model=schemas.ClassOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(auth.require_admin)],
+)
+def create_class(payload: schemas.ClassIn, db: Session = Depends(get_db)):
+    name = payload.name.strip()
+    if payload.parent_id is not None:
+        _get_class_or_404(db, payload.parent_id)
+    _ensure_unique_name(db, name, payload.parent_id)
+
+    position = db.scalar(
+        select(func.coalesce(func.max(models.ItemClass.position), -1) + 1).where(
+            models.ItemClass.parent_id.is_(None)
+            if payload.parent_id is None
+            else models.ItemClass.parent_id == payload.parent_id
+        )
+    )
+    node = models.ItemClass(name=name, parent_id=payload.parent_id, position=position or 0)
+    db.add(node)
+    db.commit()
+    db.refresh(node)
+    return schemas.ClassOut(
+        id=node.id, name=node.name, parent_id=node.parent_id, position=node.position, item_count=0
+    )
+
+
+def _descendants_of(db: Session, root_id: int) -> set[int]:
+    return crud.class_descendant_ids(crud.all_classes(db), root_id)
+
+
+@router.patch(
+    "/classes/{class_id}",
+    response_model=schemas.ClassOut,
+    dependencies=[Depends(auth.require_admin)],
+)
+def update_class(class_id: int, payload: schemas.ClassUpdate, db: Session = Depends(get_db)):
+    node = _get_class_or_404(db, class_id)
+    fields = payload.model_dump(exclude_unset=True)
+
+    if "parent_id" in fields and fields["parent_id"] is not None:
+        parent_id = fields["parent_id"]
+        if parent_id == class_id or parent_id in _descendants_of(db, class_id):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Une classe ne peut pas être placée sous elle-même",
+            )
+        _get_class_or_404(db, parent_id)
+
+    name = (fields.get("name") or node.name).strip()
+    parent_id = fields["parent_id"] if "parent_id" in fields else node.parent_id
+    _ensure_unique_name(db, name, parent_id, exclude_id=node.id)
+
+    node.name = name
+    node.parent_id = parent_id
+    db.commit()
+    db.refresh(node)
+
+    used = db.scalar(
+        select(func.count()).select_from(models.Item).where(models.Item.class_id == node.id)
+    ) or 0
+    return schemas.ClassOut(
+        id=node.id, name=node.name, parent_id=node.parent_id, position=node.position, item_count=used
+    )
+
+
+@router.delete(
+    "/classes/{class_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(auth.require_admin)],
+)
+def delete_class(
+    class_id: int,
+    force: bool = False,
+    db: Session = Depends(get_db),
+):
+    """Supprime la classe **et sa descendance**.
+
+    Sans `force`, refuse si des objets y sont rattachés : on ne désaffecte pas
+    des pièces à l'insu de l'utilisateur.
+    """
+    node = _get_class_or_404(db, class_id)
+    ids = _descendants_of(db, class_id)
+    used = db.scalar(
+        select(func.count()).select_from(models.Item).where(models.Item.class_id.in_(ids))
+    ) or 0
+
+    if used and not force:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{used} objet(s) utilisent cette classe ou l'une de ses sous-classes. "
+            "Confirmez la suppression pour les laisser sans classe.",
+        )
+
+    # `Item.class_id` passe à NULL (ON DELETE SET NULL), le reste part en cascade.
+    db.delete(node)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------- #
+# Clés d'API — ADMIN
+# --------------------------------------------------------------------------- #
+@router.get(
+    "/api-keys",
+    response_model=list[schemas.ApiKeyOut],
+    dependencies=[Depends(auth.require_admin)],
+)
+def list_api_keys(db: Session = Depends(get_db)):
+    return list(db.scalars(select(models.ApiKey).order_by(models.ApiKey.created_at.desc())).all())
+
+
+@router.post(
+    "/api-keys",
+    response_model=schemas.ApiKeyCreated,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(auth.require_admin)],
+)
+def create_api_key(payload: schemas.ApiKeyIn, db: Session = Depends(get_db)):
+    """Génère une clé. La valeur en clair n'est renvoyée que par cette réponse."""
+    token = api_keys.generate_key()
+    record = models.ApiKey(
+        label=payload.label.strip(),
+        key_hash=api_keys.hash_key(token),
+        prefix=api_keys.display_prefix(token),
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return schemas.ApiKeyCreated(
+        key=token, api_key=schemas.ApiKeyOut.model_validate(record)
+    )
+
+
+@router.patch(
+    "/api-keys/{key_id}",
+    response_model=schemas.ApiKeyOut,
+    dependencies=[Depends(auth.require_admin)],
+)
+def update_api_key(key_id: int, payload: schemas.ApiKeyUpdate, db: Session = Depends(get_db)):
+    record = db.get(models.ApiKey, key_id)
+    if record is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Clé {key_id} introuvable")
+
+    fields = payload.model_dump(exclude_unset=True)
+    if fields.get("label"):
+        record.label = fields["label"].strip()
+    if fields.get("is_active") is not None:
+        record.is_active = fields["is_active"]
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@router.delete(
+    "/api-keys/{key_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(auth.require_admin)],
+)
+def delete_api_key(key_id: int, db: Session = Depends(get_db)):
+    record = db.get(models.ApiKey, key_id)
+    if record is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Clé {key_id} introuvable")
+    db.delete(record)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

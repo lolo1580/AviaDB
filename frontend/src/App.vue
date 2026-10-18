@@ -4,6 +4,7 @@ import { RouterView } from 'vue-router'
 import { auth, refreshSession } from './auth'
 import { initUi } from './ui'
 import { loadSettings } from './settings'
+import { loadClasses } from './classes'
 import AppShell from './components/layout/AppShell.vue'
 import LoginPanel from './components/LoginPanel.vue'
 import ToastStack from './components/ToastStack.vue'
@@ -13,14 +14,14 @@ import PromptDialog from './components/ui/PromptDialog.vue'
 onMounted(async () => {
   initUi()
   await refreshSession()
-  if (auth.authenticated) await loadSettings()
+  if (auth.authenticated) await Promise.all([loadSettings(), loadClasses()])
 })
 
-// Les réglages monétaires ne sont lisibles qu'une fois connecté.
+// Les réglages monétaires et les classes ne sont lisibles qu'une fois connecté.
 watch(
   () => auth.authenticated,
   (value) => {
-    if (value) loadSettings()
+    if (value) Promise.all([loadSettings(), loadClasses()])
   },
 )
 </script>

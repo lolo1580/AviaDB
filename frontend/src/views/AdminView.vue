@@ -5,12 +5,15 @@ import { auth, canWrite, isAdmin, refreshSession } from '../auth'
 import { ui, setAdminTab } from '../ui'
 import { STATUS_LABEL, TYPE_LABEL, formatMoney } from '../labels'
 import { currencyLabel, refreshRates, saveBaseCurrency, saveRates, settings } from '../settings'
+import { classes, flattenedClasses, loadClasses, subtreeItemCount } from '../classes'
 import { isPending, optimistic, tempId } from '../optimistic'
 import { confirm as askConfirm } from '../composables/useConfirm'
 import { prompt as askPrompt } from '../composables/usePrompt'
 import { useItemList } from '../composables/useItemList'
 import { toast } from '../toast'
 import AppTabs from '../components/ui/AppTabs.vue'
+import AppModal from '../components/ui/AppModal.vue'
+import AppButton from '../components/ui/AppButton.vue'
 import FilterBar from '../components/FilterBar.vue'
 import ItemFormModal from '../components/ItemFormModal.vue'
 
@@ -25,7 +28,7 @@ const notice = ref('')
 
 const filters = reactive({
   q: '', item_type: [], status: [], country: [], scale: [],
-  manufacturer: [], tag: [], sort: 'name', order: 'asc',
+  manufacturer: [], tag: [], class_id: '', sort: 'name', order: 'asc',
 })
 
 // Liste des objets + mutations optimistes (les facettes suivent en arrière-plan).
@@ -47,8 +50,10 @@ const tabs = computed(() =>
   [
     { id: 'items', label: 'Objets', icon: 'collection', badge: total.value },
     { id: 'tags', label: 'Tags', icon: 'inbox', badge: tags.value.length },
+    { id: 'classes', label: 'Classes', icon: 'book', badge: classes.list.length },
     { id: 'currencies', label: 'Devises & taux', icon: 'charts', badge: Object.keys(settings.rates || {}).length },
     isAdmin() ? { id: 'users', label: 'Comptes', icon: 'user', badge: users.value.length } : null,
+    isAdmin() ? { id: 'api', label: 'API', icon: 'external', badge: apiKeys.value.length } : null,
     { id: 'backup', label: 'Sauvegarde', icon: 'external', badge: null },
   ].filter(Boolean),
 )
@@ -82,6 +87,141 @@ async function loadUsage() {
     /* sans conséquence : on retombe sur la devise de référence */
   }
 }
+
+// --------------------------------------------------------------------------- #
+// Classes (arborescence)
+// --------------------------------------------------------------------------- #
+const newRootClass = ref('')
+const classRows = computed(() => flattenedClasses())
+
+async function addClass(parentId = null, label = 'Ajouter une classe racine') {
+  const parent = parentId ? classes.list.find((node) => node.id === parentId) : null
+  const name = await askPrompt({
+    title: parent ? `Nouvelle sous-classe de « ${parent.name} »` : 'Nouvelle classe racine',
+    label: 'Nom de la classe',
+    placeholder: 'Aéronefs, Chasseur, Transport…',
+    maxLength: 80,
+    confirmLabel: 'Créer',
+  })
+  if (name === null || !name.trim()) return
+  try {
+    await api.createClass({ name: name.trim(), parent_id: parentId })
+    await loadClasses()
+    toast.success(`Classe « ${name.trim()} » créée`)
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function renameClass(node) {
+  const name = await askPrompt({
+    title: 'Renommer la classe',
+    label: 'Nouveau nom',
+    value: node.name,
+    maxLength: 80,
+    confirmLabel: 'Renommer',
+  })
+  if (name === null || name.trim() === node.name) return
+  try {
+    await api.updateClass(node.id, { name: name.trim() })
+    await loadClasses()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function deleteClass(node) {
+  const used = subtreeItemCount(node.id)
+  const accepted = await askConfirm({
+    title: `Supprimer « ${node.name} » ?`,
+    message: used
+      ? `${used} objet(s) sont rattachés à cette classe ou à ses sous-classes : ils resteront dans la collection, mais sans classe.`
+      : 'La classe et ses éventuelles sous-classes seront supprimées.',
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!accepted) return
+  try {
+    await api.deleteClass(node.id, used > 0)
+    await Promise.all([loadClasses(), load()])
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+// --------------------------------------------------------------------------- #
+// Clés d'API
+// --------------------------------------------------------------------------- #
+const apiKeys = ref([])
+const newKeyLabel = ref('')
+const createdKey = ref(null)
+
+async function loadApiKeys() {
+  if (!isAdmin()) {
+    apiKeys.value = []
+    return
+  }
+  try {
+    apiKeys.value = await api.listApiKeys()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function addApiKey() {
+  const label = newKeyLabel.value.trim()
+  if (!label) return
+  try {
+    const created = await api.createApiKey(label)
+    createdKey.value = created
+    newKeyLabel.value = ''
+    await loadApiKeys()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function toggleApiKey(record) {
+  try {
+    await api.updateApiKey(record.id, { is_active: !record.is_active })
+    await loadApiKeys()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function removeApiKey(record) {
+  const accepted = await askConfirm({
+    title: 'Révoquer cette clé ?',
+    message: `« ${record.label} » ne pourra plus interroger l’API. Cette action est définitive.`,
+    confirmLabel: 'Révoquer',
+    danger: true,
+  })
+  if (!accepted) return
+  try {
+    await api.deleteApiKey(record.id)
+    await loadApiKeys()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function copyKey() {
+  try {
+    await navigator.clipboard.writeText(createdKey.value.key)
+    toast.success('Clé copiée dans le presse-papiers')
+  } catch {
+    error.value = 'Copie impossible : sélectionnez la clé à la main.'
+  }
+}
+
+const publicStatsUrl = computed(
+  () => `${window.location.origin}/api/public/stats`,
+)
+const curlExample = computed(
+  () =>
+    `curl -H "X-API-Key: ${createdKey.value?.key ?? 'VOTRE_CLE'}" \\\n  ${publicStatsUrl.value}`,
+)
 
 // Actions en masse
 const bulkStatus = ref('STORED_BOX')
@@ -123,7 +263,7 @@ async function load() {
 onMounted(async () => {
   if (!auth.checked) await refreshSession()
   await load()
-  await Promise.all([loadUsers(), loadUsage()])
+  await Promise.all([loadUsers(), loadUsage(), loadClasses(), loadApiKeys()])
 })
 
 function specific(item) {
@@ -473,6 +613,17 @@ watch(
   () => settings.rates,
   () => syncRateDraft(),
   { deep: true, immediate: true },
+)
+
+// Toute modification d'un filtre relance la requête (comme dans la collection).
+let filtersDebounce
+watch(
+  filters,
+  () => {
+    clearTimeout(filtersDebounce)
+    filtersDebounce = setTimeout(() => load(), 250)
+  },
+  { deep: true },
 )
 
 async function renameTag(tag) {
@@ -899,6 +1050,173 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
         </div>
     </section>
 
+    <!-- =============================== Onglet « Classes » =============================== -->
+    <section
+      v-else-if="ui.adminTab === 'classes'"
+      id="panel-classes"
+      role="tabpanel"
+      aria-labelledby="tab-classes"
+      class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+    >
+      <div class="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">Classes</h3>
+          <p class="text-xs text-slate-500 dark:text-slate-400">
+            Arborescence de classement (classe → sous-classe). Chaque objet peut être rattaché
+            à une classe ; filtrer sur une classe inclut sa descendance.
+          </p>
+        </div>
+        <div v-if="canWrite()" class="flex flex-wrap items-end gap-2">
+          <input
+            v-model="newRootClass"
+            placeholder="Nouvelle classe racine…"
+            class="w-56 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
+            @keyup.enter="newRootClass.trim() && (addClass(null, newRootClass), (newRootClass = ''))"
+          />
+          <button
+            type="button"
+            :class="btnPrimary"
+            :disabled="!newRootClass.trim()"
+            @click="addClass(null); newRootClass = ''"
+          >
+            Ajouter
+          </button>
+        </div>
+      </div>
+
+      <ul v-if="classRows.length" class="mt-4 divide-y divide-slate-100 dark:divide-slate-800">
+        <li
+          v-for="node in classRows"
+          :key="node.id"
+          class="flex flex-wrap items-center gap-2 py-2"
+          :style="{ paddingLeft: `${node.depth * 1.5}rem` }"
+        >
+          <AppIcon
+            v-if="node.depth"
+            name="collapseRight"
+            size="h-3 w-3"
+            class="shrink-0 text-slate-300 dark:text-slate-600"
+          />
+          <span class="text-sm font-medium text-slate-800 dark:text-slate-200">{{ node.name }}</span>
+          <span
+            v-if="subtreeItemCount(node.id)"
+            class="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700 dark:bg-sky-950 dark:text-sky-300"
+          >
+            {{ subtreeItemCount(node.id) }} objet(s)
+          </span>
+
+          <div v-if="canWrite()" class="ml-auto flex flex-wrap gap-2 text-xs">
+            <button type="button" class="text-sky-600 hover:underline dark:text-sky-400" @click="addClass(node.id)">
+              + sous-classe
+            </button>
+            <button type="button" class="text-slate-500 hover:underline dark:text-slate-400" @click="renameClass(node)">
+              renommer
+            </button>
+            <button type="button" class="text-rose-600 hover:underline dark:text-rose-400" @click="deleteClass(node)">
+              supprimer
+            </button>
+          </div>
+        </li>
+      </ul>
+      <p v-else class="mt-4 text-sm text-slate-400 dark:text-slate-500">
+        Aucune classe pour l’instant. Créez par exemple « Aéronefs », puis « Chasseur » à
+        l’intérieur, puis « Rafale ».
+      </p>
+    </section>
+
+    <!-- ================================ Onglet « API » ================================ -->
+    <section
+      v-else-if="ui.adminTab === 'api' && isAdmin()"
+      id="panel-api"
+      role="tabpanel"
+      aria-labelledby="tab-api"
+      class="flex flex-col gap-4"
+    >
+      <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">Clés d’API</h3>
+        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          Une clé donne accès aux <strong>métriques agrégées</strong> de la collection
+          (<code>GET {{ '/api/public/stats' }}</code>) : compteurs, valeurs totales et répartitions.
+          Aucun nom d’objet, aucun prix unitaire, aucun emplacement n’est exposé. Pratique pour
+          afficher quelques chiffres sur un site externe.
+        </p>
+
+        <div v-if="canWrite()" class="mt-3 flex flex-wrap items-end gap-2">
+          <label class="flex flex-col gap-1">
+            <span class="text-xs font-medium text-slate-500 dark:text-slate-400">Libellé</span>
+            <input
+              v-model="newKeyLabel"
+              placeholder="Page d’accueil du site"
+              class="w-64 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
+              @keyup.enter="addApiKey"
+            />
+          </label>
+          <button type="button" :class="btnPrimary" :disabled="!newKeyLabel.trim()" @click="addApiKey">
+            Générer une clé
+          </button>
+        </div>
+
+        <div v-if="apiKeys.length" class="mt-4 overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
+            <thead class="bg-slate-50 dark:bg-slate-800/60">
+              <tr class="text-left text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                <th :class="cell">Libellé</th>
+                <th :class="cell">Clé</th>
+                <th :class="cell">État</th>
+                <th :class="cell">Créée le</th>
+                <th :class="cell">Dernier appel</th>
+                <th :class="cell">Appels</th>
+                <th :class="cell">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+              <tr v-for="record in apiKeys" :key="record.id" class="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                <td :class="[cell, 'font-medium text-slate-900 dark:text-slate-100']">{{ record.label }}</td>
+                <td :class="[cell, 'font-mono text-xs']">{{ record.prefix }}</td>
+                <td :class="cell">
+                  <span
+                    class="rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset"
+                    :class="record.is_active
+                      ? 'bg-emerald-100 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-400/30'
+                      : 'bg-slate-100 text-slate-600 ring-slate-500/20 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-400/30'"
+                  >
+                    {{ record.is_active ? 'Active' : 'Révoquée' }}
+                  </span>
+                </td>
+                <td :class="cell">{{ new Date(record.created_at).toLocaleDateString('fr-FR') }}</td>
+                <td :class="cell">
+                  {{ record.last_used_at ? new Date(record.last_used_at).toLocaleString('fr-FR') : '—' }}
+                </td>
+                <td :class="cell">{{ record.request_count }}</td>
+                <td :class="cell">
+                  <div class="flex gap-2">
+                    <button type="button" class="text-slate-500 hover:underline dark:text-slate-400" @click="toggleApiKey(record)">
+                      {{ record.is_active ? 'Désactiver' : 'Réactiver' }}
+                    </button>
+                    <button type="button" class="text-rose-600 hover:underline dark:text-rose-400" @click="removeApiKey(record)">
+                      Révoquer
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-else class="mt-4 text-sm text-slate-400 dark:text-slate-500">Aucune clé pour l’instant.</p>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">Utilisation</h3>
+        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          En-tête <code>X-API-Key</code>, ou paramètre <code>?api_key=</code> pour un widget.
+          La page de documentation complète est sur
+          <a href="/api-docs/" target="_blank" rel="noopener" class="text-sky-600 hover:underline dark:text-sky-400">/api-docs/</a>.
+        </p>
+        <pre class="mt-2 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-100"><code>curl -H "X-API-Key: aviadb_…" \
+  {{ publicStatsUrl }}</code></pre>
+      </div>
+    </section>
+
     <!-- ============================== Onglet « Comptes » ============================== -->
     <section
       v-else-if="ui.adminTab === 'users' && isAdmin()"
@@ -1057,6 +1375,34 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
         </a>
       </div>
     </section>
+
+    <!-- Clé fraîchement créée : affichée une seule fois -->
+    <AppModal
+      :open="createdKey !== null"
+      title="Clé d’API créée"
+      subtitle="Copiez-la maintenant : elle ne sera plus jamais affichée."
+      size="md"
+      level="top"
+      @close="createdKey = null"
+    >
+      <div v-if="createdKey" class="space-y-4">
+        <div class="rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800">
+          <p class="text-xs text-slate-500 dark:text-slate-400">{{ createdKey.api_key.label }}</p>
+          <code class="mt-1 block break-all font-mono text-sm text-slate-800 dark:text-slate-100">
+            {{ createdKey.key }}
+          </code>
+        </div>
+        <div>
+          <p class="text-xs font-medium text-slate-500 dark:text-slate-400">Exemple d’appel</p>
+          <pre class="mt-1 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-100"><code>{{ curlExample }}</code></pre>
+        </div>
+      </div>
+
+      <template #footer>
+        <AppButton variant="secondary" @click="createdKey = null">Fermer</AppButton>
+        <AppButton variant="primary" @click="copyKey">Copier la clé</AppButton>
+      </template>
+    </AppModal>
 
     <ItemFormModal
       :open="showForm && canWrite()"

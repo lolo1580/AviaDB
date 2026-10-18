@@ -124,6 +124,11 @@ class Item(Base):
     purchase_eur_value: Mapped[float | None] = mapped_column(Float)
     purchase_rate_date: Mapped[date | None] = mapped_column(Date)
 
+    # Classe (arborescente) à laquelle l'objet appartient
+    class_id: Mapped[int | None] = mapped_column(
+        ForeignKey("classes.id", ondelete="SET NULL"), index=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -141,6 +146,7 @@ class Item(Base):
         order_by="(ItemPhoto.position, ItemPhoto.id)",
     )
     tags: Mapped[list[Tag]] = relationship(secondary=item_tags, back_populates="items")
+    item_class: Mapped[ItemClass | None] = relationship(back_populates="items")
 
     def __repr__(self) -> str:  # pragma: no cover - confort de debug
         return f"<Item id={self.id} name={self.name!r} type={self.item_type.value}>"
@@ -219,6 +225,56 @@ class Tag(Base):
     name: Mapped[str] = mapped_column(String(64), index=True)
 
     items: Mapped[list[Item]] = relationship(secondary=item_tags, back_populates="tags")
+
+
+# --------------------------------------------------------------------------- #
+# Classes (arborescence : classe -> sous-classe -> …)
+# --------------------------------------------------------------------------- #
+class ItemClass(Base):
+    __tablename__ = "classes"
+    __table_args__ = (UniqueConstraint("parent_id", "name", name="uq_classes_parent_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), index=True)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("classes.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    parent: Mapped[ItemClass | None] = relationship(
+        back_populates="children", remote_side="ItemClass.id"
+    )
+    children: Mapped[list[ItemClass]] = relationship(
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        order_by="(ItemClass.position, ItemClass.name)",
+    )
+    items: Mapped[list[Item]] = relationship(back_populates="item_class")
+
+    def __repr__(self) -> str:  # pragma: no cover - confort de debug
+        return f"<ItemClass id={self.id} name={self.name!r} parent={self.parent_id}>"
+
+
+# --------------------------------------------------------------------------- #
+# Clés d'API (accès en lecture aux métriques, pour un site externe)
+# --------------------------------------------------------------------------- #
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+    __table_args__ = (UniqueConstraint("key_hash", name="uq_api_keys_hash"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    label: Mapped[str] = mapped_column(String(120))
+    # Seule l'empreinte est conservée : la clé en clair n'est affichée qu'une fois.
+    key_hash: Mapped[str] = mapped_column(String(64), index=True)
+    prefix: Mapped[str] = mapped_column(String(24))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    request_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    def __repr__(self) -> str:  # pragma: no cover - confort de debug
+        return f"<ApiKey id={self.id} label={self.label!r} active={self.is_active}>"
 
 
 # --------------------------------------------------------------------------- #

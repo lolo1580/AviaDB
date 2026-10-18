@@ -24,7 +24,7 @@ const metaError = ref('')
 
 const filters = reactive({
   q: '', item_type: [], status: [], country: [], scale: [],
-  manufacturer: [], tag: [], sort: 'name', order: 'asc',
+  manufacturer: [], tag: [], class_id: '', sort: 'name', order: 'asc',
 })
 
 // Les agrégats sont rafraîchis en arrière-plan après chaque mutation :

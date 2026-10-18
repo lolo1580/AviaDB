@@ -19,6 +19,7 @@ import {
   formatMoney,
 } from '../labels'
 import { settings, toBase } from '../settings'
+import { classPath } from '../classes'
 import AppDrawer from './ui/AppDrawer.vue'
 import AppButton from './ui/AppButton.vue'
 import PhotoLightbox from './PhotoLightbox.vue'
@@ -41,6 +42,7 @@ watch(
 
 const base = computed(() => settings.default_currency)
 const foreign = computed(() => Boolean(props.item?.currency && props.item.currency !== base.value))
+const classLabel = computed(() => classPath(props.item?.class_id))
 
 /** Détails techniques, selon le type d'objet. */
 const technical = computed(() => {
@@ -209,6 +211,15 @@ const cell = 'text-sm'
         <p v-else class="mt-2 text-sm text-slate-400 dark:text-slate-500">
           Aucune information d’acquisition.
         </p>
+      </section>
+
+      <!-- Classification -->
+      <section>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          Classification
+        </h3>
+        <p v-if="classLabel" class="mt-2 text-sm text-slate-800 dark:text-slate-200">{{ classLabel }}</p>
+        <p v-else class="mt-2 text-sm text-slate-400 dark:text-slate-500">Aucune classe attribuée.</p>
       </section>
 
       <!-- Notes -->
