@@ -136,7 +136,7 @@ aviadb/
 │   ├── src/
 │   │   ├── layout/       # navItems, icons (SVG inline), modalStack
 │   │   ├── components/
-│   │   │   ├── ui/       # AppModal, AppButton, AppTabs, ConfirmDialog, PromptDialog
+│   │   │   ├── ui/       # AppModal, AppDrawer, AppButton, AppTabs, ConfirmDialog, PromptDialog
 │   │   │   ├── layout/   # AppShell, AppSidebar, AppTopbar, notifications, avatar
 │   │   │   └── …         # LoginPanel, ThemeToggle, PhotoLightbox, StatsPanel, …
 │   │   ├── views/        # Collection, Souhaits, Statistiques, Admin
