@@ -39,7 +39,6 @@ services:
       # Images uniquement : la base vit désormais dans le volume PostgreSQL.
       UPLOAD_DIR: /app/data/uploads
       IMAGE_MAX_DIMENSION: "1600"
-      IMAGE_THUMB_DIMENSION: "480"
       # Mot de passe du premier compte admin. Surchargez-le via un fichier .env.
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
       SECRET_KEY: ${SECRET_KEY:-}

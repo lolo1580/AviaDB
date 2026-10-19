@@ -23,6 +23,7 @@ logger = logging.getLogger("aviadb.migrations")
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "item_photos": {
         "position": "INTEGER NOT NULL DEFAULT 0",
+        "content_hash": "VARCHAR(64)",
     },
     "items": {
         "loaned_to": "VARCHAR(120)",

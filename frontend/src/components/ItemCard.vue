@@ -31,7 +31,7 @@ const specifics = computed(() => {
     >
       <img
         v-if="cover"
-        :src="photoUrl(cover.thumb_path || cover.file_path)"
+        :src="photoUrl(cover.file_path, 480)"
         :alt="item.name"
         loading="lazy"
         class="h-full w-full object-cover transition duration-300 group-hover:scale-105"

@@ -334,7 +334,7 @@ async function recoverPrice(link) {
             :title="photo.caption || 'Agrandir'"
             @click="lightboxIndex = index"
           >
-            <img :src="photoUrl(photo.thumb_path || photo.file_path)" :alt="photo.caption || ''" class="aspect-square w-full object-cover transition group-hover:scale-105" />
+            <img :src="photoUrl(photo.file_path, 480)" :alt="photo.caption || ''" class="aspect-square w-full object-cover transition group-hover:scale-105" />
             <span
               v-if="photo.is_primary"
               class="absolute left-1 top-1 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[0.6rem] font-semibold text-white"

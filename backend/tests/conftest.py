@@ -110,13 +110,20 @@ def png_bytes():
 
 @pytest.fixture
 def upload_photo(admin_client, png_bytes):
-    """Téléverse une image sur un objet."""
+    """Téléverse une image sur un objet.
+
+    La couleur varie à chaque appel : deux uploads de test ne sont donc pas
+    considérés comme des doublons (le dédoublonnage est testé séparément).
+    """
+    counter = {"n": 0}
 
     def _upload(item_id, caption=None, size=(1200, 900)):
+        counter["n"] += 1
+        color = ((counter["n"] * 37) % 256, 90, 200)
         data = {"caption": caption} if caption else {}
         response = admin_client.post(
             f"/api/items/{item_id}/photos",
-            files={"file": ("photo.png", png_bytes(size=size), "image/png")},
+            files={"file": ("photo.png", png_bytes(size=size, color=color), "image/png")},
             data=data,
         )
         assert response.status_code == 201, response.text

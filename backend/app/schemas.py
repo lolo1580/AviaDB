@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .models import (
     AttachmentType,
@@ -150,6 +150,28 @@ class PhotoUpdate(BaseModel):
 
 class PhotoReorderIn(BaseModel):
     ids: list[int] = Field(min_length=1)
+
+
+class CropBox(BaseModel):
+    """Recadrage exprimé en fractions (0 à 1) de l'image après rotation."""
+
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _within_image(self) -> CropBox:
+        if self.x + self.width > 1.000001 or self.y + self.height > 1.000001:
+            raise ValueError("le recadrage dépasse les limites de l'image")
+        return self
+
+
+class PhotoTransformIn(BaseModel):
+    """Rotation (sens horaire) et/ou recadrage manuel d'une photo."""
+
+    rotate: Literal[0, 90, 180, 270] = 0
+    crop: CropBox | None = None
 
 
 class TagOut(ORMModel):

@@ -73,7 +73,11 @@ export function useItemList({ limit = 200, refreshStats } = {}) {
         request: () => api.uploadPhoto(itemId, file),
         onSuccess: (photo) => {
           const item = items.value.find((entry) => entry.id === itemId)
-          if (item) item.photos = [...item.photos, photo]
+          if (!item) return
+          const existing = (item.photos || []).some((entry) => entry.id === photo.id)
+          item.photos = existing
+            ? item.photos.map((entry) => (entry.id === photo.id ? photo : entry))
+            : [...(item.photos || []), photo]
         },
       })
     }

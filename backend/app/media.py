@@ -1,24 +1,32 @@
-"""Gestion des médias — upload, normalisation et stockage des images.
+"""Gestion des médias — upload, normalisation, variantes et stockage.
 
-Chaque image est convertie en WebP et déclinée en deux tailles :
-- l'image principale, bornée à `IMAGE_MAX_DIMENSION` (1600px par défaut) ;
-- une vignette bornée à `IMAGE_THUMB_DIMENSION` (480px), pour la grille.
+Chaque image téléversée est convertie en WebP et bornée à `IMAGE_MAX_DIMENSION`
+(1600 px par défaut). Les variantes plus petites (vignettes) ne sont **pas**
+stockées à l'upload : elles sont produites **à la volée** par
+`render_variant()` et mises en cache sur disque (`<nom>_w<largeur>.webp`).
 
-Les fichiers sont rangés sous `UPLOAD_DIR/items/<item_id>/<uuid>.webp` et
-`..._thumb.webp`. Le dossier est monté en volume Docker et servi en statique
-sur `/uploads`.
+Les fichiers sont rangés sous `UPLOAD_DIR/items/<item_id>/<uuid>.webp` et servis
+par la route `/uploads/...` du backend.
+
+Fonctions de maintenance :
+- `content_hash` (SHA-256) permet de détecter une image déjà présente ;
+- `cleanup_orphans()` supprime les fichiers qui ne sont plus référencés en base.
 """
 
 from __future__ import annotations
 
+import hashlib
 import io
 import mimetypes
 import os
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
 from PIL import Image, ImageOps, UnidentifiedImageError
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 # Certaines bases MIME minimales (images slim) ignorent le WebP : on l'enregistre
 # pour que les fichiers servis aient le bon Content-Type.
@@ -27,17 +35,23 @@ mimetypes.add_type("image/webp", ".webp")
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./uploads")).resolve()
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", 15 * 1024 * 1024))
 MAX_DIMENSION = int(os.getenv("IMAGE_MAX_DIMENSION", 1600))
-THUMB_DIMENSION = int(os.getenv("IMAGE_THUMB_DIMENSION", 480))
 WEBP_QUALITY = int(os.getenv("IMAGE_WEBP_QUALITY", 85))
 THUMB_QUALITY = int(os.getenv("IMAGE_THUMB_QUALITY", 80))
 
 ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP", "GIF", "BMP", "TIFF"}
+
+# Bornes des variantes demandées à la volée.
+MIN_VARIANT = 32
+MAX_VARIANT = 2048
 
 
 def ensure_upload_dir() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
+# --------------------------------------------------------------------------- #
+# Normalisation
+# --------------------------------------------------------------------------- #
 def _resize(img: Image.Image, max_dim: int) -> Image.Image:
     if max(img.size) <= max_dim:
         return img
@@ -46,8 +60,29 @@ def _resize(img: Image.Image, max_dim: int) -> Image.Image:
     return resized
 
 
-def save_image(upload: UploadFile, item_id: int) -> tuple[str, str]:
-    """Normalise puis enregistre l'image. Renvoie (chemin principal, chemin vignette)."""
+def _normalize(img: Image.Image) -> Image.Image:
+    """Corrige l'orientation EXIF et normalise le mode couleur (WebP gère l'alpha)."""
+    img = ImageOps.exif_transpose(img)
+    if img.mode in ("RGBA", "LA", "P"):
+        return img.convert("RGBA")
+    return img.convert("RGB")
+
+
+def _encode_webp(img: Image.Image, quality: int) -> bytes:
+    buffer = io.BytesIO()
+    img.save(buffer, format="WEBP", quality=quality, method=6)
+    return buffer.getvalue()
+
+
+# --------------------------------------------------------------------------- #
+# Upload
+# --------------------------------------------------------------------------- #
+def save_image(upload: UploadFile, item_id: int) -> tuple[str, str | None, str]:
+    """Normalise et enregistre l'image.
+
+    Renvoie `(chemin principal, vignette, empreinte)`. La vignette vaut toujours
+    `None` : elle est générée à la demande (voir `render_variant`).
+    """
     data = upload.file.read(MAX_UPLOAD_BYTES + 1)
     if not data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Fichier vide")
@@ -68,36 +103,136 @@ def save_image(upload: UploadFile, item_id: int) -> tuple[str, str]:
             status.HTTP_400_BAD_REQUEST, f"Format {img.format} non supporté"
         )
 
-    # Corrige l'orientation EXIF, puis normalise le mode couleur (WebP gère l'alpha).
-    img = ImageOps.exif_transpose(img)
-    if img.mode in ("RGBA", "LA", "P"):
-        img = img.convert("RGBA")
-    else:
-        img = img.convert("RGB")
+    img = _resize(_normalize(img), MAX_DIMENSION)
+    payload = _encode_webp(img, WEBP_QUALITY)
+    content_hash = hashlib.sha256(payload).hexdigest()
 
     rel_dir = Path("items") / str(item_id)
     (UPLOAD_DIR / rel_dir).mkdir(parents=True, exist_ok=True)
 
-    stem = uuid.uuid4().hex
-    main_rel = rel_dir / f"{stem}.webp"
-    thumb_rel = rel_dir / f"{stem}_thumb.webp"
-
+    main_rel = rel_dir / f"{uuid.uuid4().hex}.webp"
     try:
-        _resize(img, MAX_DIMENSION).save(
-            UPLOAD_DIR / main_rel, format="WEBP", quality=WEBP_QUALITY, method=6
-        )
-        _resize(img, THUMB_DIMENSION).save(
-            UPLOAD_DIR / thumb_rel, format="WEBP", quality=THUMB_QUALITY, method=6
-        )
+        (UPLOAD_DIR / main_rel).write_bytes(payload)
     except OSError:
-        delete_files(main_rel.as_posix(), thumb_rel.as_posix())
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Échec de l'enregistrement de l'image"
         ) from None
 
-    return main_rel.as_posix(), thumb_rel.as_posix()
+    return main_rel.as_posix(), None, content_hash
 
 
+# --------------------------------------------------------------------------- #
+# Lecture et variantes à la volée
+# --------------------------------------------------------------------------- #
+def resolve_upload(relative: str) -> Path | None:
+    """Chemin absolu sûr d'un fichier sous `UPLOAD_DIR`, ou `None`."""
+    if not relative:
+        return None
+    target = (UPLOAD_DIR / relative).resolve()
+    if not target.is_relative_to(UPLOAD_DIR) or not target.is_file():
+        return None
+    return target
+
+
+def _variant_relative(relative: str, width: int) -> str:
+    path = Path(relative)
+    return (path.parent / f"{path.stem}_w{int(width)}.webp").as_posix()
+
+
+def cached_variants(relative: str) -> list[str]:
+    """Variantes déjà mises en cache pour ce fichier (chemins relatifs)."""
+    if not relative:
+        return []
+    path = Path(relative)
+    folder = UPLOAD_DIR / path.parent
+    if not folder.is_dir():
+        return []
+    return [
+        candidate.relative_to(UPLOAD_DIR).as_posix()
+        for candidate in folder.glob(f"{path.stem}_w*.webp")
+    ]
+
+
+def render_variant(relative: str, width: int) -> bytes:
+    """Renvoie une variante WebP à la largeur demandée, avec cache disque.
+
+    Lève `FileNotFoundError` si l'image source n'existe pas.
+    """
+    width = max(MIN_VARIANT, min(MAX_VARIANT, int(width)))
+    cache_rel = _variant_relative(relative, width)
+    cache = UPLOAD_DIR / cache_rel
+    if cache.is_file():
+        return cache.read_bytes()
+
+    source = resolve_upload(relative)
+    if source is None:
+        raise FileNotFoundError(relative)
+
+    with Image.open(source) as img:
+        img.load()
+        img.thumbnail((width, width), Image.Resampling.LANCZOS)
+        payload = _encode_webp(_normalize(img), THUMB_QUALITY)
+
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(payload)
+    except OSError:
+        pass  # le cache est optionnel : on renvoie quand même l'image
+    return payload
+
+
+# --------------------------------------------------------------------------- #
+# Rotation / recadrage manuels
+# --------------------------------------------------------------------------- #
+def transform_image(
+    relative: str,
+    *,
+    rotate: int = 0,
+    crop: tuple[float, float, float, float] | None = None,
+) -> tuple[str, str]:
+    """Applique rotation (degrés horaires) et/ou recadrage, sous un nouveau nom.
+
+    `crop` est un quadruplet `(x, y, largeur, hauteur)` en fractions (0 à 1) de
+    l'image **après rotation**. Renvoie `(nouveau chemin, nouvelle empreinte)`.
+    """
+    source = resolve_upload(relative)
+    if source is None:
+        raise FileNotFoundError(relative)
+
+    with Image.open(source) as img:
+        img.load()
+        img = _normalize(img)
+
+        if rotate % 360:
+            # PIL tourne dans le sens anti-horaire : un signe négatif donne le
+            # sens horaire attendu par l'interface (« pivoter à droite »).
+            img = img.rotate(-(rotate % 360), expand=True)
+
+        if crop is not None:
+            x, y, width, height = crop
+            img_w, img_h = img.size
+            left = max(0, min(img_w - 1, int(x * img_w)))
+            top = max(0, min(img_h - 1, int(y * img_h)))
+            right = max(left + 1, min(img_w, left + max(1, int(width * img_w))))
+            bottom = max(top + 1, min(img_h, top + max(1, int(height * img_h))))
+            img = img.crop((left, top, right, bottom))
+
+        payload = _encode_webp(_resize(img, MAX_DIMENSION), WEBP_QUALITY)
+
+    rel_dir = Path(relative).parent
+    new_rel = rel_dir / f"{uuid.uuid4().hex}.webp"
+    try:
+        (UPLOAD_DIR / new_rel).write_bytes(payload)
+    except OSError:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "Échec de l'enregistrement de l'image"
+        ) from None
+    return new_rel.as_posix(), hashlib.sha256(payload).hexdigest()
+
+
+# --------------------------------------------------------------------------- #
+# Suppression et maintenance
+# --------------------------------------------------------------------------- #
 def delete_files(*rel_paths: str | None) -> None:
     """Supprime des fichiers du dossier uploads (garde-fou anti path traversal)."""
     for rel in rel_paths:
@@ -106,3 +241,95 @@ def delete_files(*rel_paths: str | None) -> None:
         target = (UPLOAD_DIR / rel).resolve()
         if target.is_relative_to(UPLOAD_DIR) and target.is_file():
             target.unlink(missing_ok=True)
+
+
+def delete_photo_files(photo) -> None:
+    """Supprime l'image d'une photo, sa vignette héritée et ses variantes en cache."""
+    delete_files(photo.file_path, photo.thumb_path, *cached_variants(photo.file_path))
+
+
+def backfill_hashes(db: Session) -> int:
+    """Calcule l'empreinte des photos qui n'en ont pas encore (données existantes)."""
+    from . import models  # import tardif : évite un cycle au chargement
+
+    updated = 0
+    photos = db.scalars(
+        select(models.ItemPhoto).where(models.ItemPhoto.content_hash.is_(None))
+    ).all()
+    for photo in photos:
+        target = resolve_upload(photo.file_path)
+        if target is None:
+            continue
+        photo.content_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+        updated += 1
+    if updated:
+        db.commit()
+    return updated
+
+
+def drop_legacy_thumbnails(db: Session) -> int:
+    """Supprime une fois les vignettes historiquement stockées (`_thumb.webp`).
+
+    Les vignettes sont désormais générées à la volée : les anciens fichiers
+    deviennent inutiles. L'image principale n'est pas touchée.
+    """
+    from . import models  # import tardif : évite un cycle au chargement
+
+    removed = 0
+    photos = db.scalars(
+        select(models.ItemPhoto).where(models.ItemPhoto.thumb_path.isnot(None))
+    ).all()
+    for photo in photos:
+        delete_files(photo.thumb_path)
+        photo.thumb_path = None
+        removed += 1
+    if removed:
+        db.commit()
+    return removed
+
+
+def cleanup_orphans(db: Session, *, min_age_seconds: int = 3600) -> int:
+    """Supprime les fichiers non référencés en base, plus vieux que `min_age`.
+
+    Renvoie le nombre de fichiers supprimés. `min_age_seconds` protège les
+    téléversements en cours (fichier écrit mais ligne pas encore validée).
+    """
+    from . import models  # import tardif : évite un cycle au chargement
+
+    referenced: set[str] = set()
+    rows = db.execute(
+        select(models.ItemPhoto.file_path, models.ItemPhoto.thumb_path)
+    ).all()
+    for file_path, thumb_path in rows:
+        if file_path:
+            referenced.add(Path(file_path).as_posix())
+            referenced.update(cached_variants(file_path))
+        if thumb_path:
+            referenced.add(Path(thumb_path).as_posix())
+
+    items_dir = UPLOAD_DIR / "items"
+    if not items_dir.is_dir():
+        return 0
+
+    now = datetime.now(UTC).timestamp()
+    removed = 0
+    for path in items_dir.rglob("*.webp"):
+        relative = path.relative_to(UPLOAD_DIR).as_posix()
+        if relative in referenced:
+            continue
+        try:
+            if now - path.stat().st_mtime < min_age_seconds:
+                continue
+            path.unlink()
+            removed += 1
+        except OSError:
+            continue
+
+    # Dossiers d'objets devenus vides (du plus profond au plus haut).
+    for folder in sorted(items_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if folder.is_dir():
+            try:
+                folder.rmdir()  # échoue si non vide
+            except OSError:
+                continue
+    return removed

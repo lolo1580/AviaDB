@@ -36,7 +36,7 @@ const specifics = computed(() => {
       :aria-label="item.name"
       @click.stop="$emit('edit', item)"
     >
-      <img v-if="cover" :src="photoUrl(cover.thumb_path || cover.file_path)" alt="" class="h-full w-full object-cover" />
+      <img v-if="cover" :src="photoUrl(cover.file_path, 480)" alt="" class="h-full w-full object-cover" />
       <span v-else class="grid h-full w-full place-items-center text-slate-300 dark:text-slate-600">
         <AppIcon name="collection" size="h-5 w-5" />
       </span>

@@ -10,6 +10,7 @@ import { flattenedClasses } from '../classes'
 import AppModal from './ui/AppModal.vue'
 import AppButton from './ui/AppButton.vue'
 import PhotoLightbox from './PhotoLightbox.vue'
+import PhotoCropper from './PhotoCropper.vue'
 
 const props = defineProps({
   item: { type: Object, default: null },
@@ -33,6 +34,8 @@ const error = ref('')
 const photos = ref([])
 const pendingFiles = ref([])
 const lightboxIndex = ref(null)
+const cropTarget = ref(null)
+const cropBusy = ref(false)
 
 const form = reactive({
   name: '',
@@ -249,9 +252,50 @@ async function uploadNow(file) {
     request: () => api.uploadPhoto(props.item.id, file),
     onSuccess: (photo) => {
       URL.revokeObjectURL(placeholder._preview)
+      // Dédoublonnage côté serveur : il peut renvoyer une photo déjà présente.
+      if (photos.value.some((entry) => entry.id === photo.id && entry.id !== placeholder.id)) {
+        photos.value = photos.value
+          .filter((entry) => entry.id !== placeholder.id)
+          .map((entry) => (entry.id === photo.id ? photo : entry))
+        return
+      }
       photos.value = photos.value.map((entry) => (entry.id === placeholder.id ? photo : entry))
     },
   })
+}
+
+/** Rotation (sens horaire) ou recadrage : le serveur renvoie la photo mise à jour. */
+async function transformPhoto(photo, payload) {
+  if (photo._uploading || photo._transforming) return
+  const before = { ...photo }
+  photos.value = photos.value.map((entry) =>
+    entry.id === photo.id ? { ...entry, _transforming: true } : entry,
+  )
+  try {
+    const updated = await api.transformPhoto(photo.id, payload)
+    photos.value = photos.value.map((entry) => (entry.id === photo.id ? updated : entry))
+  } catch (e) {
+    error.value = e.message
+    photos.value = photos.value.map((entry) => (entry.id === photo.id ? before : entry))
+  }
+}
+
+function rotatePhoto(photo, degrees) {
+  transformPhoto(photo, { rotate: degrees })
+}
+
+function openCrop(photo) {
+  if (photo._uploading || photo._transforming) return
+  cropTarget.value = photo
+}
+
+async function applyCrop({ crop }) {
+  const photo = cropTarget.value
+  if (!photo) return
+  cropBusy.value = true
+  await transformPhoto(photo, { crop })
+  cropBusy.value = false
+  cropTarget.value = null
 }
 
 async function setPrimary(photo) {
@@ -412,7 +456,7 @@ function hostOf(url) {
 
 function photoSource(photo) {
   if (photo._preview) return photo._preview
-  return photoUrl(photo.thumb_path || photo.file_path)
+  return photoUrl(photo.file_path, 480)
 }
 
 const inputClass =
@@ -712,7 +756,7 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
             :key="photo.id"
             draggable="true"
             class="group overflow-hidden rounded-lg border border-slate-200 transition dark:border-slate-800"
-            :class="[dragIndex === index ? 'opacity-40' : 'cursor-grab', photo._uploading ? 'syncing' : '']"
+            :class="[dragIndex === index ? 'opacity-40' : 'cursor-grab', photo._uploading || photo._transforming ? 'syncing' : '']"
             @dragstart="onDragStart(index)"
             @dragover.prevent
             @drop="onDrop(index)"
@@ -722,7 +766,7 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
               type="button"
               class="relative block w-full"
               title="Agrandir"
-              @click="photo._uploading ? null : (lightboxIndex = index)"
+              @click="photo._uploading || photo._transforming ? null : (lightboxIndex = index)"
             >
               <img :src="photoSource(photo)" alt="" class="aspect-square w-full object-cover" />
               <span
@@ -730,6 +774,12 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
                 class="absolute inset-0 grid place-items-center bg-slate-900/40 text-xs font-medium text-white"
               >
                 envoi…
+              </span>
+              <span
+                v-else-if="photo._transforming"
+                class="absolute inset-0 grid place-items-center bg-slate-900/40 text-xs font-medium text-white"
+              >
+                traitement…
               </span>
               <span
                 v-else
@@ -745,7 +795,7 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
               <p v-if="photo.is_primary" class="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
                 Couverture
               </p>
-              <div v-if="!photo._uploading" class="flex flex-wrap items-center gap-2 text-xs">
+              <div v-if="!photo._uploading && !photo._transforming" class="flex flex-wrap items-center gap-2 text-xs">
                 <button
                   v-if="!photo.is_primary"
                   type="button"
@@ -760,6 +810,29 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
                   @click="editCaption(photo)"
                 >
                   Légende
+                </button>
+                <button
+                  type="button"
+                  class="text-slate-500 hover:underline dark:text-slate-400"
+                  title="Pivoter à gauche"
+                  @click="rotatePhoto(photo, 270)"
+                >
+                  ↺
+                </button>
+                <button
+                  type="button"
+                  class="text-slate-500 hover:underline dark:text-slate-400"
+                  title="Pivoter à droite"
+                  @click="rotatePhoto(photo, 90)"
+                >
+                  ↻
+                </button>
+                <button
+                  type="button"
+                  class="text-slate-500 hover:underline dark:text-slate-400"
+                  @click="openCrop(photo)"
+                >
+                  Recadrer
                 </button>
                 <button type="button" :class="linkDanger" @click="removePhoto(photo)">Suppr.</button>
                 <span class="ml-auto flex gap-1">
@@ -821,6 +894,14 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
       <AppButton variant="secondary" @click="$emit('close')">Annuler</AppButton>
       <AppButton type="submit" :form="formId" variant="primary">Enregistrer</AppButton>
     </template>
+
+    <PhotoCropper
+      :open="cropTarget !== null"
+      :src="cropTarget ? photoUrl(cropTarget.file_path) : ''"
+      :busy="cropBusy"
+      @apply="applyCrop"
+      @close="cropTarget = null"
+    />
 
     <PhotoLightbox
       :photos="photos"

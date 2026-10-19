@@ -92,6 +92,8 @@ export const api = {
     return request(`/api/items/${itemId}/photos`, { method: 'POST', body: fd, isForm: true })
   },
   updatePhoto: (id, data) => request(`/api/photos/${id}`, { method: 'PATCH', body: data }),
+  transformPhoto: (id, data) =>
+    request(`/api/photos/${id}/transform`, { method: 'PATCH', body: data }),
   setPrimaryPhoto: (id) => request(`/api/photos/${id}/primary`, { method: 'POST' }),
   deletePhoto: (id) => request(`/api/photos/${id}`, { method: 'DELETE' }),
 
@@ -143,7 +145,8 @@ export const reportUrl = () => `${API_BASE}/api/admin/report.pdf`
 /** URL de la fiche détaillée PDF d'un objet. */
 export const itemReportUrl = (id) => `${API_BASE}/api/items/${id}/report.pdf`
 
-export const photoUrl = (path) => (path ? `${API_BASE}/uploads/${path}` : '')
+export const photoUrl = (path, width) =>
+  path ? `${API_BASE}/uploads/${path}${width ? `?w=${width}` : ''}` : ''
 
 /** Photo de couverture : la principale, sinon la première. */
 export function coverPhoto(item) {

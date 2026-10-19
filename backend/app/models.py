@@ -223,6 +223,8 @@ class ItemPhoto(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)  # ordre d'affichage
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     caption: Mapped[str | None] = mapped_column(String(255))
+    # Empreinte SHA-256 de l'image normalisée : détection des doublons.
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     item: Mapped[Item] = relationship(back_populates="photos")

@@ -853,8 +853,7 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
                 <button type="button" @click="openEdit(item)">
                   <img
                     v-if="item.photos.length"
-                    :src="photoUrl((item.photos.find((p) => p.is_primary) || item.photos[0]).thumb_path
-                      || (item.photos.find((p) => p.is_primary) || item.photos[0]).file_path)"
+                    :src="photoUrl((item.photos.find((p) => p.is_primary) || item.photos[0]).file_path, 96)"
                     class="h-10 w-10 rounded object-cover"
                   />
                   <span

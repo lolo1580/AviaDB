@@ -132,10 +132,8 @@ def bulk_action(payload: schemas.BulkActionIn, db: Session = Depends(get_db)):
 
     if payload.action == "delete":
         for item in items:
-            media.delete_files(
-                *[p.file_path for p in item.photos],
-                *[p.thumb_path for p in item.photos],
-            )
+            for photo in item.photos:
+                media.delete_photo_files(photo)
             db.delete(item)
 
     elif payload.action == "set_status":

@@ -8,9 +8,10 @@ leur upload arrivera à l'étape 2.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import date
 from typing import Literal
 
@@ -27,8 +28,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -53,6 +53,31 @@ _ITEM_LOADS = (
 )
 
 
+def _cleanup_interval() -> int:
+    return max(300, int(os.getenv("MEDIA_CLEANUP_INTERVAL", str(24 * 3600))))
+
+
+def _cleanup_min_age() -> int:
+    return max(0, int(os.getenv("MEDIA_CLEANUP_MIN_AGE", "3600")))
+
+
+def _run_media_cleanup() -> None:
+    with SessionLocal() as db:
+        removed = media.cleanup_orphans(db, min_age_seconds=_cleanup_min_age())
+    if removed:
+        logger.info("Nettoyage des médias : %s fichier(s) orphelin(s) supprimé(s)", removed)
+
+
+async def _media_maintenance_loop() -> None:
+    """Nettoie périodiquement les images orphelines (fichier sans ligne en base)."""
+    while True:
+        try:
+            await asyncio.to_thread(_run_media_cleanup)
+        except Exception:  # pragma: no cover - la boucle doit survivre
+            logger.exception("Échec du nettoyage des médias")
+        await asyncio.sleep(_cleanup_interval())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Crée les tables manquantes au démarrage, puis complète le schéma d'une
@@ -67,7 +92,18 @@ async def lifespan(app: FastAPI):
         currency.backfill_items(db)
         # Borne le journal d'activité (voir `prune_activity`).
         prune_activity(db, _activity_keep())
-    yield
+        # Empreintes des images existantes (dédoublonnage).
+        media.backfill_hashes(db)
+        # Les vignettes ne sont plus stockées : on retire les anciennes.
+        media.drop_legacy_thumbnails(db)
+
+    maintenance = asyncio.create_task(_media_maintenance_loop())
+    try:
+        yield
+    finally:
+        maintenance.cancel()
+        with suppress(asyncio.CancelledError):
+            await maintenance
 
 
 app = FastAPI(title="AviaDB API", version="0.1.0", lifespan=lifespan)
@@ -208,9 +244,28 @@ async def _record_activity(request: Request, call_next):
 
 app.middleware("http")(_record_activity)
 
-# Fichiers médias servis en statique : /uploads/items/<id>/<uuid>.webp
+# Images : route dédiée (les variantes sont produites à la volée via `?w=`).
 media.ensure_upload_dir()
-app.mount("/uploads", StaticFiles(directory=media.UPLOAD_DIR), name="uploads")
+
+
+@app.get("/uploads/{path:path}", include_in_schema=False)
+def serve_upload(
+    path: str,
+    w: int | None = Query(None, ge=media.MIN_VARIANT, le=media.MAX_VARIANT),
+):
+    """Sert une image stockée ; `?w=` renvoie une variante (mise en cache)."""
+    target = media.resolve_upload(path)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fichier introuvable")
+
+    headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+    if w is not None:
+        try:
+            payload = media.render_variant(path, w)
+        except FileNotFoundError:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Fichier introuvable") from None
+        return Response(content=payload, media_type="image/webp", headers=headers)
+    return FileResponse(target, headers=headers)
 
 # Authentification admin (login/logout/session), routes d'administration et API publique.
 app.include_router(auth.router)
@@ -551,10 +606,8 @@ def update_item(item_id: int, payload: schemas.ItemUpdate, db: Session = Depends
 )
 def delete_item(item_id: int, db: Session = Depends(get_db)):
     item = _load_item(db, item_id)
-    media.delete_files(
-        *[p.file_path for p in item.photos],
-        *[p.thumb_path for p in item.photos],
-    )
+    for photo in item.photos:
+        media.delete_photo_files(photo)
     db.delete(item)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -581,13 +634,28 @@ def list_photos(item_id: int, db: Session = Depends(get_db)):
 )
 def upload_photo(
     item_id: int,
+    response: Response,
     file: UploadFile = File(...),
     caption: str | None = Form(None),
     is_primary: bool = Form(False),
     db: Session = Depends(get_db),
 ):
     item = _load_item(db, item_id)
-    file_path, thumb_path = media.save_image(file, item.id)
+    file_path, thumb_path, content_hash = media.save_image(file, item.id)
+
+    # Dédoublonnage : la même image (empreinte identique) sur le même objet ne
+    # produit ni nouveau fichier ni nouvelle ligne.
+    duplicate = next(
+        (photo for photo in item.photos if photo.content_hash == content_hash), None
+    )
+    if duplicate is not None:
+        media.delete_files(file_path, thumb_path)
+        if is_primary and not duplicate.is_primary:
+            _set_primary(duplicate, item.photos)
+            db.commit()
+            db.refresh(duplicate)
+        response.status_code = status.HTTP_200_OK
+        return duplicate
 
     # La première photo d'un item devient automatiquement principale.
     make_primary = is_primary or not item.photos
@@ -596,6 +664,7 @@ def upload_photo(
         item=item,
         file_path=file_path,
         thumb_path=thumb_path,
+        content_hash=content_hash,
         position=next_position,
         caption=caption,
         is_primary=False,
@@ -641,6 +710,39 @@ def update_photo(
     return photo
 
 
+@app.patch(
+    "/api/photos/{photo_id}/transform",
+    response_model=schemas.PhotoOut,
+    tags=["photos"],
+    dependencies=_admin_only,
+)
+def transform_photo(
+    photo_id: int, payload: schemas.PhotoTransformIn, db: Session = Depends(get_db)
+):
+    """Applique une rotation (sens horaire) et/ou un recadrage manuel."""
+    photo = _get_photo_or_404(db, photo_id)
+    crop = None
+    if payload.crop is not None:
+        crop = (payload.crop.x, payload.crop.y, payload.crop.width, payload.crop.height)
+
+    try:
+        new_path, content_hash = media.transform_image(
+            photo.file_path, rotate=payload.rotate, crop=crop
+        )
+    except FileNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fichier image introuvable") from None
+
+    # Nouveau nom : l'URL change, donc pas de vieille image en cache navigateur.
+    old_files = [photo.file_path, photo.thumb_path, *media.cached_variants(photo.file_path)]
+    photo.file_path = new_path
+    photo.thumb_path = None
+    photo.content_hash = content_hash
+    db.commit()
+    db.refresh(photo)
+    media.delete_files(*old_files)
+    return photo
+
+
 @app.post(
     "/api/photos/{photo_id}/primary",
     response_model=schemas.PhotoOut,
@@ -666,7 +768,7 @@ def delete_photo(photo_id: int, db: Session = Depends(get_db)):
     siblings = [p for p in photo.item.photos if p.id != photo.id]
     was_primary = photo.is_primary
 
-    media.delete_files(photo.file_path, photo.thumb_path)
+    media.delete_photo_files(photo)
     db.delete(photo)
 
     # Si la photo supprimée était la principale, on promeut la suivante.

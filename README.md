@@ -14,6 +14,7 @@ Tailwind**, le tout orchestré par **Docker Compose**.
 - [API](#api)
 - [Accès & administration](#accès--administration)
 - [Sauvegarde & échange de données](#sauvegarde--échange-de-données)
+- [Images](#images)
 - [Devises & taux de change](#devises--taux-de-change)
 - [Autres écrans](#autres-écrans)
 - [Interface](#interface)
@@ -126,7 +127,7 @@ aviadb/
 │   │   ├── api_keys.py   # clés d'API et route publique /api/public/stats
 │   │   ├── pricing.py    # lecture assistée d'un prix sur une page de boutique
 │   │   ├── currency.py   # devises, taux de change, conversions
-│   │   ├── media.py      # upload, conversion WebP, vignettes
+│   │   ├── media.py      # upload WebP, variantes à la volée, transformation
 │   │   ├── auth.py       # comptes, rôles, jetons, require_admin
 │   │   ├── admin.py      # bulk, import/export, comptes, tags, taux, rapport PDF
 │   │   ├── report.py     # rapport d'inventaire et fiche objet (PDF)
@@ -253,6 +254,7 @@ FastAPI expose aussi ses propres pages sur le port 8000 : `/docs` (Swagger UI) e
 | GET | `/api/items/{item_id}/photos` | photos d'un objet |
 | POST | `/api/items/{item_id}/photos` | upload (`file`, `caption`, `is_primary`) |
 | PATCH | `/api/photos/{photo_id}` | légende / photo principale |
+| PATCH | `/api/photos/{photo_id}/transform` | rotation / recadrage manuel *(ADMIN)* |
 | POST | `/api/photos/{photo_id}/primary` | désigner la photo principale |
 | DELETE | `/api/photos/{photo_id}` | supprimer la photo + le fichier |
 | GET | `/api/stats` | compteurs, valeurs, répartitions |
@@ -275,6 +277,7 @@ FastAPI expose aussi ses propres pages sur le port 8000 : `/docs` (Swagger UI) e
 | DELETE | `/api/admin/api-keys/{key_id}` | révoquer une clé *(ADMIN)* |
 | GET | `/api/public/stats` | **métriques agrégées**, via `X-API-Key` (ou `?api_key=`) |
 | GET | `/uploads/...` | images (statique) |
+| GET | `/uploads/{path}?w=480` | variante générée à la volée (mise en cache) |
 | POST | `/api/admin/login` | connexion (`username` + `password`) → cookie HttpOnly + token |
 | POST | `/api/admin/logout` | déconnexion |
 | GET | `/api/admin/session` | état de la session (rôle et identifiant inclus) |
@@ -401,6 +404,29 @@ anciennes au-delà de `BACKUP_KEEP` (7 par défaut).
 ls -lh backups/                 # archives produites
 docker compose logs -f backup   # suivi
 ```
+
+## Images
+
+Chaque photo est normalisée côté serveur (Pillow) avant d'être stockée :
+
+- formats acceptés : JPEG, PNG, WebP, GIF, BMP, TIFF ; taille max
+  `MAX_UPLOAD_BYTES` (15 Mo) ;
+- orientation **EXIF** corrigée, ré-encodage **WebP** borné à
+  `IMAGE_MAX_DIMENSION` (1600 px) ;
+- **une seule image stockée** : les vignettes sont générées **à la volée** par
+  `GET /uploads/<chemin>?w=480` et mises en cache sur disque (qualité
+  `IMAGE_THUMB_QUALITY`). Les anciennes vignettes `_thumb.webp` sont retirées
+  automatiquement au démarrage ;
+- **rotation** (90° à droite / à gauche) et **recadrage manuel** depuis le
+  formulaire (`PATCH /api/photos/{id}/transform`) ; l'image transformée est
+  réécrite sous un nouveau nom, sans conserver l'ancienne ;
+- **dédoublonnage** : deux images identiques sur un même objet ne produisent
+  qu'une seule photo (empreinte SHA-256 ; la seconde requête répond `200` au lieu
+  de `201` avec la photo existante) ;
+- **nettoyage** : les fichiers non référencés en base sont supprimés
+  périodiquement (`MEDIA_CLEANUP_INTERVAL`, 24 h par défaut) ; les fichiers plus
+  récents que `MEDIA_CLEANUP_MIN_AGE` (1 h) sont épargnés pour ne pas toucher un
+  téléversement en cours.
 
 ## Devises & taux de change
 
@@ -664,7 +690,7 @@ nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`,
 `Permissions-Policy`. `index.html` est servi en `no-store`, les assets sont
 immuables et versionnés par hash.
 
-**Vérifié** — 121 tests (dont 8 dédiés : bombe zip, archive surdimensionnée,
+**Vérifié** — 129 tests (dont 8 dédiés : bombe zip, archive surdimensionnée,
 traversée de chemin, limite d'appels, mots de passe faibles) ; le navigateur ne
 signale **aucune violation CSP** et l'application, les graphiques et la
 documentation fonctionnent avec les en-têtes en place.
@@ -684,9 +710,10 @@ documentation fonctionnent avec les en-têtes en place.
 | `POSTGRES_PASSWORD` | `change-me` | mot de passe du conteneur `db` |
 | `UPLOAD_DIR` | `./uploads` | dossier des images |
 | `IMAGE_MAX_DIMENSION` | `1600` | taille max de l'image principale (px) |
-| `IMAGE_THUMB_DIMENSION` | `480` | taille max de la vignette (px) |
 | `IMAGE_WEBP_QUALITY` | `85` | qualité WebP de l'image principale |
-| `IMAGE_THUMB_QUALITY` | `80` | qualité WebP de la vignette |
+| `IMAGE_THUMB_QUALITY` | `80` | qualité WebP des variantes |
+| `MEDIA_CLEANUP_INTERVAL` | `86400` | intervalle du nettoyage des images orphelines (s) |
+| `MEDIA_CLEANUP_MIN_AGE` | `3600` | âge minimal d'un fichier avant suppression (s) |
 | `MAX_UPLOAD_BYTES` | `15728640` | taille max d'un upload (15 Mo) |
 | `MAX_BACKUP_BYTES` | `268435456` | taille max d'une archive de restauration (256 Mo) |
 | `MAX_BACKUP_UNCOMPRESSED` | `1073741824` | volume décompressé max (1 Go) |
@@ -737,8 +764,9 @@ pytest                     # utilise par défaut la base ci-dessus
 DATABASE_URL=postgresql+psycopg://aviadb:test@localhost:5432/aviadb_test pytest
 ```
 
-La suite (`backend/tests/`, **121 tests**) couvre le CRUD, la validation (dont les
-dates invalides), la cascade, l'upload WebP et les vignettes, l'ordre des photos,
+La suite (`backend/tests/`, **129 tests**) couvre le CRUD, la validation (dont les
+dates invalides), la cascade, l'upload WebP, les variantes à la volée, la
+rotation/recadrage, le dédoublonnage, le nettoyage des orphelins, l'ordre des photos,
 les filtres (y compris par classe et sa descendance), les statistiques (dont les
 analytiques détaillés) et les graphiques, les devises et taux de change, les classes
 hiérarchiques, les liens externes et le suivi du prix (dont la lecture assistée et
