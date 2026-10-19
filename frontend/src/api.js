@@ -136,6 +136,9 @@ export const api = {
 /** URL de l'export CSV (téléchargement direct, cookie envoyé automatiquement). */
 export const exportCsvUrl = () => `${API_BASE}/api/admin/export.csv`
 
+/** URL de l'export Excel (feuilles Collection, Souhaits, Précommandes, Synthèse). */
+export const excelUrl = () => `${API_BASE}/api/admin/export.xlsx`
+
 /** URL de la sauvegarde ZIP (base + images). */
 export const backupUrl = () => `${API_BASE}/api/admin/backup`
 

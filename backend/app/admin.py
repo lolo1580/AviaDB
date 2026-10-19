@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 from starlette.background import BackgroundTask
 
-from . import api_keys, auth, backup, crud, currency, media, models, pricing, report, schemas
+from . import api_keys, auth, backup, crud, currency, excel, media, models, pricing, report, schemas
 from .database import get_db
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -183,6 +183,17 @@ def export_csv(db: Session = Depends(get_db)):
         iter([buffer.getvalue()]),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="aviadb-{stamp}.csv"'},
+    )
+
+
+@router.get("/export.xlsx")
+def export_excel(db: Session = Depends(get_db)):
+    """Export Excel : feuilles Collection, Souhaits, Précommandes et Synthèse."""
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    return Response(
+        content=excel.build_export(db),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="aviadb-{stamp}.xlsx"'},
     )
 
 

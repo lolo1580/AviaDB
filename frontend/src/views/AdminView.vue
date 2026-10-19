@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { api, backupUrl, exportCsvUrl, photoUrl, reportUrl } from '../api'
+import { api, backupUrl, excelUrl, exportCsvUrl, photoUrl, reportUrl } from '../api'
 import { auth, canWrite, isAdmin, refreshSession } from '../auth'
 import { ui, setAdminTab } from '../ui'
 import { STATUS_LABEL, TYPE_LABEL, formatMoney } from '../labels'
@@ -764,6 +764,7 @@ const cell = 'px-3 py-2 text-sm text-slate-700 dark:text-slate-300'
         <div class="flex flex-wrap gap-2">
           <button v-if="canWrite()" type="button" :class="btnPrimary" @click="openCreate">+ Nouvel objet</button>
           <button type="button" :class="btn" @click="exportJson">Exporter JSON</button>
+          <a :href="excelUrl()" :class="btn" download>Exporter Excel</a>
           <a :href="exportCsvUrl()" :class="btn" download>Exporter CSV</a>
           <label v-if="canWrite()" :class="['cursor-pointer', btn]">
             Importer JSON

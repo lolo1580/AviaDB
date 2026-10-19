@@ -131,6 +131,7 @@ aviadb/
 │   │   ├── auth.py       # comptes, rôles, jetons, require_admin
 │   │   ├── admin.py      # bulk, import/export, comptes, tags, taux, rapport PDF
 │   │   ├── report.py     # rapport d'inventaire et fiche objet (PDF)
+│   │   ├── excel.py      # export Excel multi-feuilles (xlsx)
 │   │   ├── backup.py     # sauvegarde / restauration ZIP
 │   │   ├── backup_scheduler.py  # sauvegardes planifiées (service Compose `backup`)
 │   │   ├── migrations.py # ajout idempotent des colonnes manquantes
@@ -287,7 +288,8 @@ FastAPI expose aussi ses propres pages sur le port 8000 : `/docs` (Swagger UI) e
 | POST | `/api/admin/rates/refresh` | récupérer les taux de la BCE *(ADMIN)* |
 | POST | `/api/admin/bulk` | actions en masse : `delete`, `set_status`, `add_tags`, `remove_tags` |
 | GET | `/api/admin/export` | export JSON complet |
-| GET | `/api/admin/export.csv` | export CSV (tableur) |
+| GET | `/api/admin/export.csv` | export CSV technique (réimport) |
+| GET | `/api/admin/export.xlsx` | export Excel lisible (4 feuilles) |
 | GET | `/api/admin/backup` | sauvegarde ZIP (JSON + toutes les images) |
 | POST | `/api/admin/restore` | restauration ZIP (`mode=merge` ou `replace`) |
 | GET | `/api/admin/report.pdf` | rapport d'inventaire PDF (totaux + liste des objets) |
@@ -344,7 +346,7 @@ onglet retenu d'une visite à l'autre) :
 
 | Onglet | Contenu |
 |---|---|
-| **Objets** | recherche et filtres, tableau dense, statut modifiable par ligne, sélection multiple (supprimer, statut, tags), création, export/import JSON et CSV |
+| **Objets** | recherche et filtres, tableau dense, statut modifiable par ligne, sélection multiple (supprimer, statut, tags), création, export/import JSON et CSV, export Excel |
 | **Tags** | vocabulaire : renommer (répercuté sur tous les objets) ou supprimer |
 | **Classes** | arborescence de classement (classe → sous-classe → …) : créer une racine ou une sous-classe, renommer, supprimer. Filtrer sur une classe inclut sa descendance |
 | **Devises & taux** | devise de référence, actualisation BCE, correction manuelle des taux. Seules les devises **utilisées par la collection** sont affichées — une case à cocher révèle les 25 devises, un champ filtre la liste |
@@ -379,6 +381,10 @@ Authentification : mots de passe hachés en **PBKDF2-SHA256** (stdlib), jetons
   écrasés (on ne se verrouille pas dehors) ; les autres sont recréés.
 - **Export / import JSON** et **export / import CSV** (colonnes identiques, donc
   aller-retour possible avec un tableur).
+- **Export Excel** (`.xlsx`) : classeur lisible avec les feuilles **Collection**,
+  **Souhaits**, **Précommandes** et **Synthèse** — en-têtes français, dates et
+  montants typés, filtres et volets figés, colonnes calculées (classe, valeur en
+  devise de référence, plus-value). Le CSV technique reste le format d'import.
 - **Fiche d'un objet (PDF)** : depuis le panneau de détail, une page avec photo,
   caractéristiques, liens et historique de prix (`GET /api/items/{id}/report.pdf`).
 - **Sauvegardes planifiées** : le service Compose `backup` écrit une archive ZIP
@@ -690,7 +696,7 @@ nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`,
 `Permissions-Policy`. `index.html` est servi en `no-store`, les assets sont
 immuables et versionnés par hash.
 
-**Vérifié** — 129 tests (dont 8 dédiés : bombe zip, archive surdimensionnée,
+**Vérifié** — 132 tests (dont 8 dédiés : bombe zip, archive surdimensionnée,
 traversée de chemin, limite d'appels, mots de passe faibles) ; le navigateur ne
 signale **aucune violation CSP** et l'application, les graphiques et la
 documentation fonctionnent avec les en-têtes en place.
@@ -764,7 +770,7 @@ pytest                     # utilise par défaut la base ci-dessus
 DATABASE_URL=postgresql+psycopg://aviadb:test@localhost:5432/aviadb_test pytest
 ```
 
-La suite (`backend/tests/`, **129 tests**) couvre le CRUD, la validation (dont les
+La suite (`backend/tests/`, **132 tests**) couvre le CRUD, la validation (dont les
 dates invalides), la cascade, l'upload WebP, les variantes à la volée, la
 rotation/recadrage, le dédoublonnage, le nettoyage des orphelins, l'ordre des photos,
 les filtres (y compris par classe et sa descendance), les statistiques (dont les
