@@ -28,7 +28,10 @@ class DateGuard(BaseModel):
     produire « 0005-05-05 » : on borne les années à une plage plausible.
     """
 
-    @field_validator("purchase_date", "loan_date", "loan_due_date", check_fields=False)
+    @field_validator(
+        "purchase_date", "loan_date", "loan_due_date", "preorder_release_date",
+        check_fields=False,
+    )
     @classmethod
     def _plausible_date(cls, value: date | None) -> date | None:
         if value is not None and not 1900 <= value.year <= 2100:
@@ -173,6 +176,10 @@ class ItemBase(DateGuard):
     loaned_to: str | None = Field(None, max_length=120)
     loan_date: date | None = None
     loan_due_date: date | None = None
+    # Précommande
+    preorder_release_date: date | None = None
+    preorder_shop: str | None = Field(None, max_length=120)
+    preorder_deposit: float | None = Field(None, ge=0)
 
 
 class ItemCreate(ItemBase):
@@ -199,6 +206,9 @@ class ItemUpdate(DateGuard):
     loaned_to: str | None = Field(None, max_length=120)
     loan_date: date | None = None
     loan_due_date: date | None = None
+    preorder_release_date: date | None = None
+    preorder_shop: str | None = Field(None, max_length=120)
+    preorder_deposit: float | None = Field(None, ge=0)
     diecast: DiecastDetailsIn | None = None
     patch: PatchDetailsIn | None = None
     tags: list[str] | None = None
@@ -223,6 +233,9 @@ class ItemOut(ORMModel):
     loaned_to: str | None = None
     loan_date: date | None = None
     loan_due_date: date | None = None
+    preorder_release_date: date | None = None
+    preorder_shop: str | None = None
+    preorder_deposit: float | None = None
     created_at: datetime
     updated_at: datetime
     diecast: DiecastDetailsOut | None = None

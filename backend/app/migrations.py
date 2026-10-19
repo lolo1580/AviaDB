@@ -32,6 +32,9 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "purchase_eur_value": "DOUBLE PRECISION",
         "purchase_rate_date": "DATE",
         "class_id": "INTEGER REFERENCES classes(id) ON DELETE SET NULL",
+        "preorder_release_date": "DATE",
+        "preorder_shop": "VARCHAR(120)",
+        "preorder_deposit": "DOUBLE PRECISION",
     },
 }
 

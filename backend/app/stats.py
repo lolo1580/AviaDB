@@ -11,6 +11,10 @@ from sqlalchemy.orm import Session
 
 from . import crud, currency, models, schemas
 
+# Statuts dont l'objet n'est pas encore possédé (recherché ou précommandé) :
+# ils sont exclus des valeurs de la collection.
+_NOT_OWNED = (models.ItemStatus.WANTED, models.ItemStatus.PREORDER)
+
 
 def _buckets(rows) -> list[schemas.CountBucket]:
     return [
@@ -55,7 +59,10 @@ def compute_stats(db: Session, *, include_details: bool = False) -> schemas.Stat
     # Valeur estimée : conversion depuis la devise de chaque objet, aux taux courants
     estimated_rows = db.execute(
         select(models.Item.currency, func.sum(models.Item.estimated_value))
-        .where(models.Item.estimated_value.isnot(None))
+        .where(
+            models.Item.estimated_value.isnot(None),
+            models.Item.status.notin_(_NOT_OWNED),
+        )
         .group_by(models.Item.currency)
     ).all()
     total_estimated = sum(
@@ -69,7 +76,10 @@ def compute_stats(db: Session, *, include_details: bool = False) -> schemas.Stat
             models.Item.currency,
             models.Item.purchase_eur_value,
             models.Item.purchase_price,
-        ).where(models.Item.purchase_price.isnot(None))
+        ).where(
+            models.Item.purchase_price.isnot(None),
+            models.Item.status.notin_(_NOT_OWNED),
+        )
     ).all()
     total_eur = 0.0
     for code, eur_value, price in purchase_rows:
@@ -82,7 +92,10 @@ def compute_stats(db: Session, *, include_details: bool = False) -> schemas.Stat
     with_value = db.scalar(
         select(func.count())
         .select_from(models.Item)
-        .where(models.Item.estimated_value.isnot(None))
+        .where(
+            models.Item.estimated_value.isnot(None),
+            models.Item.status.notin_(_NOT_OWNED),
+        )
     ) or 0
 
     by_type = _buckets(
@@ -144,7 +157,11 @@ def compute_stats(db: Session, *, include_details: bool = False) -> schemas.Stat
     # Valeur estimée cumulée par pays, convertie dans la devise de référence
     value_rows = db.execute(
         select(models.Item.country, models.Item.currency, func.sum(models.Item.estimated_value))
-        .where(models.Item.country.isnot(None), models.Item.estimated_value.isnot(None))
+        .where(
+            models.Item.country.isnot(None),
+            models.Item.estimated_value.isnot(None),
+            models.Item.status.notin_(_NOT_OWNED),
+        )
         .group_by(models.Item.country, models.Item.currency)
     ).all()
     country_totals: dict[str, float] = {}
@@ -201,7 +218,10 @@ def compute_stats(db: Session, *, include_details: bool = False) -> schemas.Stat
                 models.Item.currency,
                 func.sum(models.Item.estimated_value),
             )
-            .where(models.Item.estimated_value.isnot(None))
+            .where(
+                models.Item.estimated_value.isnot(None),
+                models.Item.status.notin_(_NOT_OWNED),
+            )
             .group_by(models.Item.class_id, models.Item.currency)
         ).all()
         class_values: dict[str, float] = {}
@@ -222,7 +242,10 @@ def compute_stats(db: Session, *, include_details: bool = False) -> schemas.Stat
                 models.Item.currency,
                 func.sum(models.Item.estimated_value),
             )
-            .where(models.Item.estimated_value.isnot(None))
+            .where(
+                models.Item.estimated_value.isnot(None),
+                models.Item.status.notin_(_NOT_OWNED),
+            )
             .group_by(models.Item.storage_location, models.Item.currency)
         ).all()
         location_values: dict[str, float] = {}
@@ -246,6 +269,7 @@ def compute_stats(db: Session, *, include_details: bool = False) -> schemas.Stat
             ).where(
                 models.Item.purchase_date.isnot(None),
                 models.Item.purchase_price.isnot(None),
+                models.Item.status.notin_(_NOT_OWNED),
             )
         ).all()
         year_values: dict[str, float] = {}
@@ -261,7 +285,10 @@ def compute_stats(db: Session, *, include_details: bool = False) -> schemas.Stat
         # Plus-values / moins-values par objet.
         gains: list[schemas.ItemValueBucket] = []
         for item in db.scalars(
-            select(models.Item).where(models.Item.estimated_value.isnot(None))
+            select(models.Item).where(
+                models.Item.estimated_value.isnot(None),
+                models.Item.status.notin_(_NOT_OWNED),
+            )
         ).all():
             if item.purchase_price is None and item.purchase_eur_value is None:
                 continue

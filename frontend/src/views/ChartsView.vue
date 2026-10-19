@@ -196,6 +196,9 @@ const titleClass = 'text-sm font-semibold text-slate-800 dark:text-slate-200'
       <h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">Statistiques</h2>
       <p class="text-sm text-slate-500 dark:text-slate-400">
         Répartition de la collection · <span class="text-slate-400 dark:text-slate-500">{{ ratesNote }}</span>
+        <span class="text-slate-400 dark:text-slate-500">
+          · valeurs hors objets recherchés et précommandes
+        </span>
       </p>
     </div>
 

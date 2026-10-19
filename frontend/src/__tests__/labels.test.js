@@ -5,6 +5,7 @@ describe('labels', () => {
   it('expose les libellés métier', () => {
     expect(TYPE_LABEL.DIECAST).toBe('Maquette')
     expect(STATUS_LABEL.WANTED).toBe('Recherché')
+    expect(STATUS_LABEL.PREORDER).toBe('Précommande')
   })
 
   it('formate un montant en devise', () => {

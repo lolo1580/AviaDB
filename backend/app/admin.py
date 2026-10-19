@@ -43,6 +43,7 @@ CSV_COLUMNS = [
     "id", "name", "item_type", "country", "aircraft_model", "storage_location",
     "status", "purchase_date", "purchase_price", "estimated_value", "currency",
     "notes", "loaned_to", "loan_date", "loan_due_date",
+    "preorder_release_date", "preorder_shop", "preorder_deposit",
     "scale", "manufacturer", "part_number", "registration_number", "configuration",
     "unit_squadron", "base", "material", "attachment_type", "shape", "event_or_mission",
     "tags", "created_at", "updated_at",
@@ -90,6 +91,11 @@ def _csv_row(item: models.Item) -> dict:
         "loaned_to": item.loaned_to or "",
         "loan_date": item.loan_date.isoformat() if item.loan_date else "",
         "loan_due_date": item.loan_due_date.isoformat() if item.loan_due_date else "",
+        "preorder_release_date": (
+            item.preorder_release_date.isoformat() if item.preorder_release_date else ""
+        ),
+        "preorder_shop": item.preorder_shop or "",
+        "preorder_deposit": item.preorder_deposit if item.preorder_deposit is not None else "",
         "scale": diecast.scale if diecast else "",
         "manufacturer": diecast.manufacturer if diecast else "",
         "part_number": diecast.part_number if diecast else "",
@@ -230,6 +236,9 @@ def _entry_to_payload(entry: dict) -> schemas.ItemCreate:
         loaned_to=entry.get("loaned_to"),
         loan_date=entry.get("loan_date"),
         loan_due_date=entry.get("loan_due_date"),
+        preorder_release_date=entry.get("preorder_release_date"),
+        preorder_shop=entry.get("preorder_shop"),
+        preorder_deposit=entry.get("preorder_deposit"),
         tags=tags,
         diecast=backup._details(entry.get("diecast"), schemas.DiecastDetailsIn),
         patch=backup._details(entry.get("patch"), schemas.PatchDetailsIn),
@@ -298,7 +307,7 @@ def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
         entry["item_type"] = entry.get("item_type") or models.ItemType.OTHER.value
         entry["status"] = entry.get("status") or models.ItemStatus.STORED_BOX.value
         entry["tags"] = [t.strip() for t in (entry.get("tags") or "").split(",") if t.strip()]
-        for numeric in ("purchase_price", "estimated_value"):
+        for numeric in ("purchase_price", "estimated_value", "preorder_deposit"):
             if entry.get(numeric) is not None:
                 try:
                     entry[numeric] = float(entry[numeric])

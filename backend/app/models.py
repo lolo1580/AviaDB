@@ -47,6 +47,7 @@ class ItemStatus(str, enum.Enum):
     EXHIBITED = "EXHIBITED"
     STORED_BOX = "STORED_BOX"
     WANTED = "WANTED"
+    PREORDER = "PREORDER"
     TRANSIT = "TRANSIT"
 
 
@@ -128,6 +129,11 @@ class Item(Base):
     class_id: Mapped[int | None] = mapped_column(
         ForeignKey("classes.id", ondelete="SET NULL"), index=True
     )
+
+    # Précommande (statut PREORDER) : sortie attendue, boutique, acompte versé
+    preorder_release_date: Mapped[date | None] = mapped_column(Date)
+    preorder_shop: Mapped[str | None] = mapped_column(String(120))
+    preorder_deposit: Mapped[float | None] = mapped_column(Float)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

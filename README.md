@@ -198,10 +198,12 @@ Tables annexes : `users` (comptes), `settings` (devise de référence, taux),
 `api_keys` (clés d'accès à l'API publique).
 
 `items` : `name`, `item_type` (DIECAST/PATCH/OTHER), `country`, `aircraft_model`,
-`storage_location`, `status` (EXHIBITED/STORED_BOX/WANTED/TRANSIT),
+`storage_location`, `status` (EXHIBITED/STORED_BOX/WANTED/PREORDER/TRANSIT),
 `purchase_date`, `purchase_price`, `estimated_value`, `currency`,
 `purchase_eur_value` (prix d'achat figé en EUR au taux du jour d'achat),
 `purchase_rate_date`, `class_id`, `notes`, `created_at`, `updated_at`.
+Précommande : `preorder_release_date` (sortie prévue), `preorder_shop`
+(boutique/fournisseur) et `preorder_deposit` (acompte versé).
 
 `diecast_details` : `scale`, `manufacturer`, `part_number`, `registration_number`,
 `configuration`.
@@ -409,7 +411,10 @@ exprimer tous les totaux, graphiques et budgets.
 - **Taux courants** : bouton « Actualiser depuis la BCE » (frankfurter.dev,
   données BCE, sans clé d'API). Les taux sont éditables à la main si besoin.
   Convention affichée : *nombre d'unités de la devise pour 1 EUR*.
-- **Valeur estimée** : convertie aux taux courants.
+- **Valeur estimée** : convertie aux taux courants. Les objets **recherchés** et
+  en **précommande** en sont exclus (pas encore possédés) : ils comptent dans les
+  effectifs et les répartitions, mais pas dans les totaux de valeur, les
+  graphiques de valeur ni les plus-values.
 - **Prix d'achat** : converti avec le **taux du jour de l'achat** (repli sur le
   dernier jour ouvré connu), puis figé en EUR sur l'objet. Les totaux d'achat ne
   bougent donc pas quand les taux évoluent, et changer la devise de référence ne
@@ -502,6 +507,10 @@ Liens et relevés sont inclus dans la **sauvegarde ZIP** et restaurés avec l'ob
   la carte (« Sous le budget visé — 20,00 € d'économie ») et une **notification**
   est déposée dans la cloche. Une alerte n'est signalée qu'une fois par objet et par
   relevé.
+- **Précommande** : au statut « Précommande », le formulaire ouvre une section
+  dédiée (**sortie prévue**, **boutique/fournisseur**, **acompte versé**). La pièce
+  compte dans les effectifs mais reste **hors de la valeur estimée** tant qu'elle
+  n'est pas reçue.
 - **Étiquettes** (`/etiquettes`) : planches de QR codes à imprimer pour le
   rangement. Chaque étiquette porte le nom, le type, l'**emplacement**, la classe et
   un QR code qui **rouvre la fiche de l'objet** dans l'application. Filtrable par
@@ -655,7 +664,7 @@ nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`,
 `Permissions-Policy`. `index.html` est servi en `no-store`, les assets sont
 immuables et versionnés par hash.
 
-**Vérifié** — 116 tests (dont 8 dédiés : bombe zip, archive surdimensionnée,
+**Vérifié** — 121 tests (dont 8 dédiés : bombe zip, archive surdimensionnée,
 traversée de chemin, limite d'appels, mots de passe faibles) ; le navigateur ne
 signale **aucune violation CSP** et l'application, les graphiques et la
 documentation fonctionnent avec les en-têtes en place.
@@ -728,7 +737,7 @@ pytest                     # utilise par défaut la base ci-dessus
 DATABASE_URL=postgresql+psycopg://aviadb:test@localhost:5432/aviadb_test pytest
 ```
 
-La suite (`backend/tests/`, **116 tests**) couvre le CRUD, la validation (dont les
+La suite (`backend/tests/`, **121 tests**) couvre le CRUD, la validation (dont les
 dates invalides), la cascade, l'upload WebP et les vignettes, l'ordre des photos,
 les filtres (y compris par classe et sa descendance), les statistiques (dont les
 analytiques détaillés) et les graphiques, les devises et taux de change, les classes

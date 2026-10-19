@@ -16,6 +16,7 @@ export const STATUS_LABEL = {
   EXHIBITED: 'Exposé',
   STORED_BOX: 'En boîte',
   WANTED: 'Recherché',
+  PREORDER: 'Précommande',
   TRANSIT: 'En transit',
 }
 
@@ -23,6 +24,7 @@ export const STATUS_BADGE = {
   EXHIBITED: 'bg-emerald-100 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-400/30',
   STORED_BOX: 'bg-amber-100 text-amber-800 ring-amber-600/20 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-400/30',
   WANTED: 'bg-rose-100 text-rose-800 ring-rose-600/20 dark:bg-rose-950 dark:text-rose-300 dark:ring-rose-400/30',
+  PREORDER: 'bg-violet-100 text-violet-800 ring-violet-600/20 dark:bg-violet-950 dark:text-violet-300 dark:ring-violet-400/30',
   TRANSIT: 'bg-slate-100 text-slate-700 ring-slate-500/20 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-400/30',
 }
 

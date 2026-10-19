@@ -123,6 +123,15 @@ const history = computed(() => {
   }
 
   rows.push(['Emplacement', it.storage_location])
+  if (it.preorder_release_date) {
+    rows.push(['Sortie prévue le', it.preorder_release_date])
+  }
+  if (it.preorder_shop) {
+    rows.push(['Précommandé chez', it.preorder_shop])
+  }
+  if (it.preorder_deposit != null) {
+    rows.push(['Acompte versé', formatMoney(it.preorder_deposit, it.currency)])
+  }
   if (it.loaned_to) {
     rows.push(
       ['Prêté à', it.loaned_to],

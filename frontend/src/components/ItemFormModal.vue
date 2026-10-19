@@ -48,6 +48,9 @@ const form = reactive({
   tags: '',
   currency: '',
   class_id: '',
+  preorder_release_date: '',
+  preorder_shop: '',
+  preorder_deposit: '',
   diecast: { scale: '', manufacturer: '', part_number: '', registration_number: '', configuration: '' },
   patch: { unit_squadron: '', base: '', material: '', attachment_type: '', shape: '', event_or_mission: '' },
 })
@@ -113,6 +116,9 @@ async function initialize() {
     tags: '',
     currency: settings.default_currency,
     class_id: '',
+    preorder_release_date: '',
+    preorder_shop: '',
+    preorder_deposit: '',
     diecast: { scale: '', manufacturer: '', part_number: '', registration_number: '', configuration: '' },
     patch: { unit_squadron: '', base: '', material: '', attachment_type: '', shape: '', event_or_mission: '' },
   })
@@ -134,6 +140,9 @@ async function initialize() {
     tags: (it.tags || []).map((tag) => tag.name).join(', '),
     currency: it.currency ?? settings.default_currency,
     class_id: it.class_id ?? '',
+    preorder_release_date: it.preorder_release_date ?? '',
+    preorder_shop: it.preorder_shop ?? '',
+    preorder_deposit: it.preorder_deposit ?? '',
   })
   if (it.diecast) Object.assign(form.diecast, it.diecast)
   if (it.patch) Object.assign(form.patch, it.patch)
@@ -158,6 +167,7 @@ watch(
 )
 
 function buildPayload() {
+  const preorder = !isWishlist.value && form.status === 'PREORDER'
   const payload = {
     name: form.name.trim(),
     item_type: form.item_type,
@@ -169,6 +179,9 @@ function buildPayload() {
     purchase_date: isWishlist.value ? null : form.purchase_date || null,
     purchase_price: isWishlist.value ? null : toNum(form.purchase_price),
     estimated_value: toNum(form.estimated_value),
+    preorder_release_date: preorder ? form.preorder_release_date || null : null,
+    preorder_shop: preorder ? form.preorder_shop || null : null,
+    preorder_deposit: preorder ? toNum(form.preorder_deposit) : null,
     currency: form.currency || settings.default_currency,
     class_id: form.class_id === '' || form.class_id === null ? null : Number(form.class_id),
     notes: form.notes || null,
@@ -507,6 +520,38 @@ const linkDanger = 'text-rose-600 hover:underline dark:text-rose-400'
           <textarea v-model="form.notes" rows="2" :class="inputClass" />
         </label>
       </div>
+
+      <!-- Précommande : commandée mais pas encore reçue -->
+      <section
+        v-if="!isWishlist && form.status === 'PREORDER'"
+        class="rounded-xl border border-amber-200 bg-amber-50/50 p-4 dark:border-amber-900 dark:bg-amber-950/30"
+      >
+        <h3 class="text-sm font-semibold text-amber-800 dark:text-amber-300">Précommande</h3>
+        <p class="mt-1 text-xs text-amber-700/80 dark:text-amber-400/80">
+          La pièce n’est pas encore en votre possession : elle est exclue de la valeur estimée de
+          la collection.
+        </p>
+        <div class="mt-3 grid gap-4 sm:grid-cols-3">
+          <label class="flex flex-col gap-1">
+            <span :class="labelClass">Sortie prévue</span>
+            <input
+              v-model="form.preorder_release_date"
+              type="date"
+              min="1900-01-01"
+              max="2100-12-31"
+              :class="inputClass"
+            />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span :class="labelClass">Boutique / fournisseur</span>
+            <input v-model="form.preorder_shop" :class="inputClass" placeholder="Boutique, revendeur…" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span :class="labelClass">Acompte versé ({{ form.currency }})</span>
+            <input v-model="form.preorder_deposit" type="number" min="0" step="0.01" :class="inputClass" />
+          </label>
+        </div>
+      </section>
 
       <!-- Détails dynamiques selon le type -->
       <fieldset
