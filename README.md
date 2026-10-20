@@ -4,6 +4,8 @@ Gestion de collection aviation : maquettes diecast **et** patches, dans une seul
 base. Backend **FastAPI + SQLAlchemy (PostgreSQL)**, frontend **Vue 3 + Vite +
 Tailwind**, le tout orchestré par **Docker Compose**.
 
+Les évolutions sont consignées dans le [journal des modifications](CHANGELOG.md).
+
 ## Sommaire
 
 - [Base de données](#base-de-données)
@@ -46,6 +48,20 @@ DATABASE_URL=postgresql+psycopg://aviadb:motdepasse@localhost:5434/aviadb
   ```bash
   docker exec aviadb-db pg_dump -U aviadb aviadb | gzip > aviadb-pg.sql.gz
   ```
+
+### Migrations (Alembic)
+
+Le schéma est versionné dans `backend/migrations/`. Les migrations sont
+appliquées **automatiquement au démarrage** du backend ; une base existante
+antérieure à Alembic est estampillée à la révision de référence (0001) puis mise
+à niveau.
+
+```bash
+cd backend
+alembic upgrade head                    # appliquer les migrations
+alembic revision --autogenerate -m "…"  # créer une migration
+alembic current                         # révision courante
+```
 
 ## Démarrage rapide
 
@@ -134,8 +150,10 @@ aviadb/
 │   │   ├── excel.py      # export Excel multi-feuilles (xlsx)
 │   │   ├── backup.py     # sauvegarde / restauration ZIP
 │   │   ├── backup_scheduler.py  # sauvegardes planifiées (service Compose `backup`)
-│   │   ├── migrations.py # ajout idempotent des colonnes manquantes
+│   │   ├── alembic_runner.py  # migrations Alembic au démarrage
 │   │   └── main.py       # routes FastAPI + journal d'activité (middleware)
+│   ├── migrations/       # révisions Alembic (schéma versionné)
+│   ├── alembic.ini       # configuration Alembic
 │   ├── tests/            # suite pytest (conftest.py, helpers.py, 15 modules)
 │   ├── ruff.toml          # configuration du linter Python (Ruff)
 │   ├── docker-entrypoint.sh  # abandon de privilèges (utilisateur non-root)
@@ -427,9 +445,10 @@ Chaque photo est normalisée côté serveur (Pillow) avant d'être stockée :
 - **rotation** (90° à droite / à gauche) et **recadrage manuel** depuis le
   formulaire (`PATCH /api/photos/{id}/transform`) ; l'image transformée est
   réécrite sous un nouveau nom, sans conserver l'ancienne ;
-- **dédoublonnage** : deux images identiques sur un même objet ne produisent
-  qu'une seule photo (empreinte SHA-256 ; la seconde requête répond `200` au lieu
-  de `201` avec la photo existante) ;
+- **dédoublonnage global** : une image identique (SHA-256) ou **perceptuellement
+  très proche** (dHash, distance de Hamming ≤ `PHOTO_DUPLICATE_DISTANCE`) déjà
+  utilisée est refusée (`409`) ; sur le même objet, la photo existante est
+  renvoyée (`200`). Le champ `force=true` permet de passer outre ;
 - **nettoyage** : les fichiers non référencés en base sont supprimés
   périodiquement (`MEDIA_CLEANUP_INTERVAL`, 24 h par défaut) ; les fichiers plus
   récents que `MEDIA_CLEANUP_MIN_AGE` (1 h) sont épargnés pour ne pas toucher un
@@ -693,7 +712,7 @@ nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`,
 `Permissions-Policy`. `index.html` est servi en `no-store`, les assets sont
 immuables et versionnés par hash.
 
-**Vérifié** — 132 tests (dont 8 dédiés : bombe zip, archive surdimensionnée,
+**Vérifié** — 136 tests (dont 8 dédiés : bombe zip, archive surdimensionnée,
 traversée de chemin, limite d'appels, mots de passe faibles) ; le navigateur ne
 signale **aucune violation CSP** et l'application, les graphiques et la
 documentation fonctionnent avec les en-têtes en place.
@@ -717,6 +736,7 @@ documentation fonctionnent avec les en-têtes en place.
 | `IMAGE_THUMB_QUALITY` | `80` | qualité WebP des variantes |
 | `MEDIA_CLEANUP_INTERVAL` | `86400` | intervalle du nettoyage des images orphelines (s) |
 | `MEDIA_CLEANUP_MIN_AGE` | `3600` | âge minimal d'un fichier avant suppression (s) |
+| `PHOTO_DUPLICATE_DISTANCE` | `5` | distance de Hamming tolérée entre empreintes perceptuelles |
 | `MAX_UPLOAD_BYTES` | `15728640` | taille max d'un upload (15 Mo) |
 | `MAX_BACKUP_BYTES` | `268435456` | taille max d'une archive de restauration (256 Mo) |
 | `MAX_BACKUP_UNCOMPRESSED` | `1073741824` | volume décompressé max (1 Go) |
@@ -767,7 +787,7 @@ pytest                     # utilise par défaut la base ci-dessus
 DATABASE_URL=postgresql+psycopg://aviadb:test@localhost:5432/aviadb_test pytest
 ```
 
-La suite (`backend/tests/`, **132 tests**) couvre le CRUD, la validation (dont les
+La suite (`backend/tests/`, **136 tests**) couvre le CRUD, la validation (dont les
 dates invalides), la cascade, l'upload WebP, les variantes à la volée, la
 rotation/recadrage, le dédoublonnage, le nettoyage des orphelins, l'ordre des photos,
 les filtres (y compris par classe et sa descendance), les statistiques (dont les
