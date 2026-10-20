@@ -104,6 +104,22 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
 Nginx proxifie alors vers `127.0.0.1:8000` au lieu du DNS Compose (`BACKEND_URL`).
 Les ports 80 et 8000 doivent être libres sur l'hôte.
 
+### Images publiées (GitHub Container Registry)
+
+Le workflow `.github/workflows/docker.yml` construit les images **backend** et
+**frontend** à chaque push et pull request. Sur `main` (et sur les tags `v*`),
+elles sont publiées sur GHCR :
+
+```bash
+docker pull ghcr.io/lolo1580/aviadb-backend:latest
+docker pull ghcr.io/lolo1580/aviadb-frontend:latest
+```
+
+Sur une pull request, les images sont **construites sans être publiées** (simple
+validation des Dockerfiles). Le `docker-compose.yml` continue de construire
+localement par défaut ; pour utiliser les images publiées, remplacez les
+`build:` par les `image:` correspondantes (ou utilisez un fichier de surcharge).
+
 ## Développement local
 
 PostgreSQL est le seul moteur : le plus simple est de lancer la base du compose,
@@ -191,6 +207,7 @@ aviadb/
 │   ├── Dockerfile        # multi-stage : build Vite → Nginx
 │   └── package.json
 ├── .github/workflows/ci.yml  # CI : lint, pytest PostgreSQL, Vitest, build, Playwright
+├── .github/workflows/docker.yml  # images Docker (build + publication GHCR)
 ├── .env.example          # modèle de configuration
 ├── data/                 # images uploadées (la base est dans le volume Docker)
 ├── backups/              # sauvegardes ZIP planifiées (service `backup`)
@@ -826,7 +843,8 @@ les appels API simulés — aucun backend requis.
 L'intégration continue (`.github/workflows/ci.yml`) lance trois jobs à chaque push
 et pull request : **backend** (Ruff puis pytest, sur un service PostgreSQL),
 **frontend** (ESLint, Vitest avec couverture, puis build Vite) et **e2e**
-(Playwright sur Chromium).
+(Playwright sur Chromium). Un workflow distinct (`.github/workflows/docker.yml`)
+construit les images Docker et les publie sur GHCR.
 
 ### Conteneurs non privilégiés
 
