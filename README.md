@@ -361,9 +361,10 @@ Authentification : mots de passe hachés en **PBKDF2-SHA256** (stdlib), jetons
 **HMAC-SHA256** signés transmis en cookie `HttpOnly` ou en en-tête
 `Authorization: Bearer`. Blocage temporaire après `ADMIN_MAX_FAILURES` échecs.
 
-> En HTTP simple sur le réseau local, le mot de passe circule en clair. Pour un
-> usage hors LAN, placez l'application derrière HTTPS et activez
-> `ADMIN_COOKIE_SECURE=true`.
+> En HTTP simple sur le réseau local, le mot de passe circule en clair. En
+> production, **HTTPS est terminé par un proxy en amont** (hors application) :
+> activez alors `ADMIN_COOKIE_SECURE=true` pour que le cookie de session soit
+> marqué `Secure`.
 
 ## Sauvegarde & échange de données
 
@@ -553,10 +554,6 @@ Liens et relevés sont inclus dans la **sauvegarde ZIP** et restaurés avec l'ob
   d'acquisition par année, plus-values et moins-values, échelle, matière des patchs)
   via Chart.js. Le panneau de la collection affiche aussi la **plus-value** globale.
 
-> La gestion des prêts a été retirée de l'interface. Le backend la conserve
-> (colonnes `loaned_to`, `loan_date`, `loan_due_date`, filtre `has_loan`) : elle
-> est donc réactivable sans migration.
-
 ## Interface
 
 Le shell du dashboard est modulaire et réutilisable (`src/components/layout/`) :
@@ -701,12 +698,12 @@ traversée de chemin, limite d'appels, mots de passe faibles) ; le navigateur ne
 signale **aucune violation CSP** et l'application, les graphiques et la
 documentation fonctionnent avec les en-têtes en place.
 
-> **Choix assumé.** L'application est servie en **HTTP sur le réseau local** : le
-> mot de passe circule en clair sur ce segment, ce qui est accepté pour un usage
-> privé. En cas d'exposition hors du réseau local, il faudrait passer en HTTPS et
-> activer `ADMIN_COOKIE_SECURE=true`. Une archive de sauvegarde contient les
-> empreintes de mots de passe : conservez-la à l'abri. Enfin, révoquez une clé
-> d'API dès qu'elle n'est plus utilisée.
+> **Choix assumé.** L'application est servie en **HTTP** en interne : le mot de
+> passe circule en clair sur le segment local, ce qui est accepté pour un usage
+> privé. En production, le **TLS est terminé par un proxy en amont** (hors
+> application) : pensez à `ADMIN_COOKIE_SECURE=true`. Une archive de sauvegarde
+> contient les empreintes de mots de passe : conservez-la à l'abri. Enfin,
+> révoquez une clé d'API dès qu'elle n'est plus utilisée.
 
 ## Variables d'environnement
 
@@ -737,7 +734,7 @@ documentation fonctionnent avec les en-têtes en place.
 | `ADMIN_USERNAME` | `admin` | identifiant du premier compte admin |
 | `SECRET_KEY` | *(dérivé d'`ADMIN_PASSWORD`)* | clé de signature des jetons |
 | `ADMIN_TOKEN_TTL` | `43200` | durée de vie d'une session (secondes) |
-| `ADMIN_COOKIE_SECURE` | `false` | passe le cookie en `Secure` (à activer en HTTPS) |
+| `ADMIN_COOKIE_SECURE` | `false` | cookie `Secure` (à activer derrière le proxy TLS) |
 | `ADMIN_MAX_FAILURES` | `10` | tentatives de connexion avant blocage temporaire |
 
 Ces valeurs sont lues depuis le fichier `.env` (voir `.env.example`), qui n'est
