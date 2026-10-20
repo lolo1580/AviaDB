@@ -96,7 +96,8 @@ test('la collection s’affiche', async ({ page }) => {
   await stubApi(page)
   await page.goto('/')
 
-  await expect(page.getByRole('heading', { name: /Collection/ })).toBeVisible()
+  const main = page.locator('main')
+  await expect(main.getByRole('heading', { name: /Collection/ })).toBeVisible()
   await expect(page.getByText('Rafale').first()).toBeVisible()
 })
 
@@ -105,5 +106,5 @@ test('la navigation mène aux statistiques', async ({ page }) => {
   await page.goto('/')
   await page.goto('/statistiques')
 
-  await expect(page.getByRole('heading', { name: /Statistiques/ })).toBeVisible()
+  await expect(page.locator('main').getByRole('heading', { name: /Statistiques/ })).toBeVisible()
 })
