@@ -1,0 +1,20 @@
+# Surcharge : utilise les images publiées sur GHCR au lieu de construire
+# localement (workflow .github/workflows/docker.yml).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.registry.yml -f docker-compose.host.yml up -d
+#
+# Prérequis : paquets publics, ou `docker login ghcr.io` avec un PAT
+# disposant de `read:packages`. REGISTRY et AVIADB_TAG se règlent dans `.env`.
+services:
+  backend:
+    build: !reset null
+    image: ${REGISTRY:-ghcr.io/lolo1580}/aviadb-backend:${AVIADB_TAG:-latest}
+
+  frontend:
+    build: !reset null
+    image: ${REGISTRY:-ghcr.io/lolo1580}/aviadb-frontend:${AVIADB_TAG:-latest}
+
+  backup:
+    build: !reset null
+    image: ${REGISTRY:-ghcr.io/lolo1580}/aviadb-backend:${AVIADB_TAG:-latest}

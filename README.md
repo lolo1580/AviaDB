@@ -117,8 +117,21 @@ docker pull ghcr.io/lolo1580/aviadb-frontend:latest
 
 Sur une pull request, les images sont **construites sans être publiées** (simple
 validation des Dockerfiles). Le `docker-compose.yml` continue de construire
-localement par défaut ; pour utiliser les images publiées, remplacez les
-`build:` par les `image:` correspondantes (ou utilisez un fichier de surcharge).
+localement par défaut ; pour déployer les images publiées (sans build local),
+utilisez la surcharge `docker-compose.registry.yml` :
+
+```bash
+# réseau bridge (port 8080 pour l'UI)
+docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d
+
+# réseau hôte (port 80)
+docker compose -f docker-compose.yml -f docker-compose.registry.yml \
+  -f docker-compose.host.yml up -d
+```
+
+`REGISTRY` et `AVIADB_TAG` se règlent dans `.env` (valeurs par défaut :
+`ghcr.io/lolo1580` et `latest`). Les paquets sont publics ; s'ils sont privés,
+faites `docker login ghcr.io` avec un jeton disposant de `read:packages`.
 
 ## Développement local
 
@@ -212,7 +225,8 @@ aviadb/
 ├── data/                 # images uploadées (la base est dans le volume Docker)
 ├── backups/              # sauvegardes ZIP planifiées (service `backup`)
 ├── docker-compose.yml    # db + backend + frontend + backup
-└── docker-compose.host.yml   # surcharge réseau hôte
+├── docker-compose.host.yml   # surcharge réseau hôte
+└── docker-compose.registry.yml  # surcharge images publiées (GHCR)
 ```
 
 ## Modèle de données
@@ -767,6 +781,8 @@ documentation fonctionnent avec les en-têtes en place.
 | `BACKUP_KEEP` | `7` | nombre d'archives conservées |
 | `BACKUP_INTERVAL` | `86400` | intervalle entre deux sauvegardes (secondes) |
 | `ACTIVITY_KEEP` | `5000` | entrées de journal d'activité conservées (élagage automatique) |
+| `REGISTRY` | `ghcr.io/lolo1580` | registre des images (surcharge `registry`) |
+| `AVIADB_TAG` | `latest` | tag des images publiées à utiliser |
 | `ADMIN_PASSWORD` | *(vide)* | mot de passe du premier admin. **Vide = aucune protection** |
 | `ADMIN_USERNAME` | `admin` | identifiant du premier compte admin |
 | `SECRET_KEY` | *(dérivé d'`ADMIN_PASSWORD`)* | clé de signature des jetons |
