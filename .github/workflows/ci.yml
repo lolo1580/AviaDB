@@ -37,6 +37,8 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - name: Installer les dépendances
         run: pip install -r requirements-dev.txt
+      - name: Vérifier les migrations (Alembic)
+        run: alembic upgrade head
       - name: Linter (Ruff)
         run: ruff check .
       - name: Lancer les tests

@@ -32,8 +32,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from . import admin, api_keys, auth, crud, currency, media, migrations, models, report, schemas
-from .database import Base, SessionLocal, engine, get_db
+from . import admin, alembic_runner, api_keys, auth, crud, currency, media, models, report, schemas
+from .database import SessionLocal, get_db
 from .stats import compute_stats
 
 logger = logging.getLogger("aviadb.activity")
@@ -80,10 +80,10 @@ async def _media_maintenance_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Crée les tables manquantes au démarrage, puis complète le schéma d'une
-    # base existante (colonnes ajoutées après coup).
-    Base.metadata.create_all(bind=engine)
-    migrations.ensure_schema()
+    # Schéma : migrations Alembic. Sous pytest, la suite gère elle-même son
+    # schéma (drop_all/create_all) : on saute les migrations.
+    if os.getenv("AVIADB_SKIP_MIGRATIONS") != "1":
+        alembic_runner.run_migrations()
 
     # Crée le compte admin initial si ADMIN_PASSWORD est défini, puis met à jour
     # l'état de protection (authentification requise ou non).
@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI):
             await maintenance
 
 
-app = FastAPI(title="AviaDB API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="AviaDB API", version="0.2.0", lifespan=lifespan)
 
 # --------------------------------------------------------------------------- #
 # Accès protégé : tout l'API et les images exigent une session admin.
@@ -638,24 +638,38 @@ def upload_photo(
     file: UploadFile = File(...),
     caption: str | None = Form(None),
     is_primary: bool = Form(False),
+    force: bool = Form(False),
     db: Session = Depends(get_db),
 ):
     item = _load_item(db, item_id)
-    file_path, thumb_path, content_hash = media.save_image(file, item.id)
+    file_path, thumb_path, content_hash, perceptual_hash = media.save_image(file, item.id)
 
-    # Dédoublonnage : la même image (empreinte identique) sur le même objet ne
-    # produit ni nouveau fichier ni nouvelle ligne.
-    duplicate = next(
-        (photo for photo in item.photos if photo.content_hash == content_hash), None
-    )
-    if duplicate is not None:
-        media.delete_files(file_path, thumb_path)
-        if is_primary and not duplicate.is_primary:
-            _set_primary(duplicate, item.photos)
-            db.commit()
-            db.refresh(duplicate)
-        response.status_code = status.HTTP_200_OK
-        return duplicate
+    # Dédoublonnage global : image identique ou perceptuellement très proche.
+    if not force:
+        duplicate = media.find_duplicate(db, content_hash, perceptual_hash)
+        if duplicate is not None:
+            photo_id, owner_id, _distance = duplicate
+            media.delete_files(file_path, thumb_path)
+
+            if owner_id == item.id:
+                existing = next((photo for photo in item.photos if photo.id == photo_id), None)
+                if existing is None:
+                    existing = db.get(models.ItemPhoto, photo_id)
+                if existing is not None:
+                    if is_primary and not existing.is_primary:
+                        _set_primary(existing, item.photos)
+                        db.commit()
+                        db.refresh(existing)
+                    response.status_code = status.HTTP_200_OK
+                    return existing
+
+            owner = db.get(models.Item, owner_id)
+            owner_name = owner.name if owner is not None else f"objet {owner_id}"
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Cette image (ou une très proche) est déjà utilisée par "
+                f"l’objet « {owner_name} » (#{owner_id}).",
+            )
 
     # La première photo d'un item devient automatiquement principale.
     make_primary = is_primary or not item.photos
@@ -665,6 +679,7 @@ def upload_photo(
         file_path=file_path,
         thumb_path=thumb_path,
         content_hash=content_hash,
+        perceptual_hash=perceptual_hash,
         position=next_position,
         caption=caption,
         is_primary=False,
@@ -726,7 +741,7 @@ def transform_photo(
         crop = (payload.crop.x, payload.crop.y, payload.crop.width, payload.crop.height)
 
     try:
-        new_path, content_hash = media.transform_image(
+        new_path, content_hash, perceptual_hash = media.transform_image(
             photo.file_path, rotate=payload.rotate, crop=crop
         )
     except FileNotFoundError:
@@ -737,6 +752,7 @@ def transform_photo(
     photo.file_path = new_path
     photo.thumb_path = None
     photo.content_hash = content_hash
+    photo.perceptual_hash = perceptual_hash
     db.commit()
     db.refresh(photo)
     media.delete_files(*old_files)

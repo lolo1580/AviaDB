@@ -166,6 +166,89 @@ def test_duplicate_upload_is_not_stored_twice(admin_client, create_item, png_byt
     assert len(list(folder.glob("*.webp"))) == 1
 
 
+def test_duplicate_on_another_item_is_rejected(admin_client, create_item, png_bytes):
+    first = create_item(name="Premier")
+    second = create_item(name="Second")
+    payload = png_bytes(seed=42)
+
+    assert (
+        admin_client.post(
+            f"/api/items/{first['id']}/photos",
+            files={"file": ("a.png", payload, "image/png")},
+        ).status_code
+        == 201
+    )
+    duplicate = admin_client.post(
+        f"/api/items/{second['id']}/photos",
+        files={"file": ("b.png", payload, "image/png")},
+    )
+
+    assert duplicate.status_code == 409, duplicate.text
+    assert "Premier" in duplicate.json()["detail"]
+
+
+def test_perceptual_duplicate_is_rejected(admin_client, create_item, png_bytes):
+    first = create_item(name="Original")
+    second = create_item(name="Quasi copie")
+    original = png_bytes(seed=7)
+    near = png_bytes(seed=7, brightness=2)
+    assert original != near
+
+    assert (
+        admin_client.post(
+            f"/api/items/{first['id']}/photos",
+            files={"file": ("a.png", original, "image/png")},
+        ).status_code
+        == 201
+    )
+    response = admin_client.post(
+        f"/api/items/{second['id']}/photos",
+        files={"file": ("b.png", near, "image/png")},
+    )
+
+    assert response.status_code == 409, response.text
+    assert "Original" in response.json()["detail"]
+
+
+def test_distinct_images_are_accepted(admin_client, create_item, png_bytes):
+    first = create_item(name="A")
+    second = create_item(name="B")
+
+    assert (
+        admin_client.post(
+            f"/api/items/{first['id']}/photos",
+            files={"file": ("a.png", png_bytes(seed=1), "image/png")},
+        ).status_code
+        == 201
+    )
+    assert (
+        admin_client.post(
+            f"/api/items/{second['id']}/photos",
+            files={"file": ("b.png", png_bytes(seed=2), "image/png")},
+        ).status_code
+        == 201
+    )
+
+
+def test_force_bypasses_deduplication(admin_client, create_item, png_bytes):
+    item = create_item()
+    payload = png_bytes(seed=11)
+    url = f"/api/items/{item['id']}/photos"
+
+    assert (
+        admin_client.post(url, files={"file": ("a.png", payload, "image/png")}).status_code
+        == 201
+    )
+    forced = admin_client.post(
+        url,
+        files={"file": ("b.png", payload, "image/png")},
+        data={"force": "true"},
+    )
+
+    assert forced.status_code == 201, forced.text
+    assert len(admin_client.get(url).json()) == 2
+
+
 def test_rotate_photo(admin_client, create_item, upload_photo):
     photo = upload_photo(create_item()["id"], size=(1200, 800))
     old_path = photo["file_path"]

@@ -25,7 +25,7 @@ from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
 from PIL import Image, ImageOps, UnidentifiedImageError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 # Certaines bases MIME minimales (images slim) ignorent le WebP : on l'enregistre
@@ -39,6 +39,10 @@ WEBP_QUALITY = int(os.getenv("IMAGE_WEBP_QUALITY", 85))
 THUMB_QUALITY = int(os.getenv("IMAGE_THUMB_QUALITY", 80))
 
 ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP", "GIF", "BMP", "TIFF"}
+
+# Distance de Hamming tolérée entre deux empreintes perceptuelles (0 à 64) :
+# en dessous, les images sont considérées comme des quasi-doublons.
+DUPLICATE_DISTANCE = int(os.getenv("PHOTO_DUPLICATE_DISTANCE", "5"))
 
 # Bornes des variantes demandées à la volée.
 MIN_VARIANT = 32
@@ -74,14 +78,33 @@ def _encode_webp(img: Image.Image, quality: int) -> bytes:
     return buffer.getvalue()
 
 
+def _perceptual_hash(img: Image.Image) -> str:
+    """dHash 64 bits : compare les luminances de 9 × 8 pixels voisins."""
+    small = img.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
+    pixels = list(small.getdata())
+    bits = 0
+    for row in range(8):
+        for offset in range(8):
+            left = pixels[row * 9 + offset]
+            right = pixels[row * 9 + offset + 1]
+            bits = (bits << 1) | (1 if left > right else 0)
+    return f"{bits:016x}"
+
+
+def perceptual_distance(first: str, second: str) -> int:
+    """Distance de Hamming entre deux empreintes perceptuelles."""
+    return (int(first, 16) ^ int(second, 16)).bit_count()
+
+
 # --------------------------------------------------------------------------- #
 # Upload
 # --------------------------------------------------------------------------- #
-def save_image(upload: UploadFile, item_id: int) -> tuple[str, str | None, str]:
+def save_image(upload: UploadFile, item_id: int) -> tuple[str, str | None, str, str]:
     """Normalise et enregistre l'image.
 
-    Renvoie `(chemin principal, vignette, empreinte)`. La vignette vaut toujours
-    `None` : elle est générée à la demande (voir `render_variant`).
+    Renvoie `(chemin principal, vignette, empreinte exacte, empreinte
+    perceptuelle)`. La vignette vaut toujours `None` : elle est générée à la
+    demande (voir `render_variant`).
     """
     data = upload.file.read(MAX_UPLOAD_BYTES + 1)
     if not data:
@@ -104,6 +127,7 @@ def save_image(upload: UploadFile, item_id: int) -> tuple[str, str | None, str]:
         )
 
     img = _resize(_normalize(img), MAX_DIMENSION)
+    perceptual_hash = _perceptual_hash(img)
     payload = _encode_webp(img, WEBP_QUALITY)
     content_hash = hashlib.sha256(payload).hexdigest()
 
@@ -118,7 +142,7 @@ def save_image(upload: UploadFile, item_id: int) -> tuple[str, str | None, str]:
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Échec de l'enregistrement de l'image"
         ) from None
 
-    return main_rel.as_posix(), None, content_hash
+    return main_rel.as_posix(), None, content_hash, perceptual_hash
 
 
 # --------------------------------------------------------------------------- #
@@ -189,11 +213,12 @@ def transform_image(
     *,
     rotate: int = 0,
     crop: tuple[float, float, float, float] | None = None,
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     """Applique rotation (degrés horaires) et/ou recadrage, sous un nouveau nom.
 
     `crop` est un quadruplet `(x, y, largeur, hauteur)` en fractions (0 à 1) de
-    l'image **après rotation**. Renvoie `(nouveau chemin, nouvelle empreinte)`.
+    l'image **après rotation**. Renvoie `(nouveau chemin, empreinte exacte,
+    empreinte perceptuelle)`.
     """
     source = resolve_upload(relative)
     if source is None:
@@ -217,7 +242,9 @@ def transform_image(
             bottom = max(top + 1, min(img_h, top + max(1, int(height * img_h))))
             img = img.crop((left, top, right, bottom))
 
-        payload = _encode_webp(_resize(img, MAX_DIMENSION), WEBP_QUALITY)
+        final = _resize(img, MAX_DIMENSION)
+        perceptual_hash = _perceptual_hash(final)
+        payload = _encode_webp(final, WEBP_QUALITY)
 
     rel_dir = Path(relative).parent
     new_rel = rel_dir / f"{uuid.uuid4().hex}.webp"
@@ -227,7 +254,7 @@ def transform_image(
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Échec de l'enregistrement de l'image"
         ) from None
-    return new_rel.as_posix(), hashlib.sha256(payload).hexdigest()
+    return new_rel.as_posix(), hashlib.sha256(payload).hexdigest(), perceptual_hash
 
 
 # --------------------------------------------------------------------------- #
@@ -249,22 +276,74 @@ def delete_photo_files(photo) -> None:
 
 
 def backfill_hashes(db: Session) -> int:
-    """Calcule l'empreinte des photos qui n'en ont pas encore (données existantes)."""
+    """Calcule les empreintes manquantes (exacte et perceptuelle)."""
     from . import models  # import tardif : évite un cycle au chargement
 
     updated = 0
     photos = db.scalars(
-        select(models.ItemPhoto).where(models.ItemPhoto.content_hash.is_(None))
+        select(models.ItemPhoto).where(
+            or_(
+                models.ItemPhoto.content_hash.is_(None),
+                models.ItemPhoto.perceptual_hash.is_(None),
+            )
+        )
     ).all()
     for photo in photos:
         target = resolve_upload(photo.file_path)
         if target is None:
             continue
-        photo.content_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+        data = target.read_bytes()
+        if photo.content_hash is None:
+            photo.content_hash = hashlib.sha256(data).hexdigest()
+        if photo.perceptual_hash is None:
+            try:
+                with Image.open(io.BytesIO(data)) as img:
+                    img.load()
+                    photo.perceptual_hash = _perceptual_hash(img)
+            except (UnidentifiedImageError, OSError):
+                continue
         updated += 1
     if updated:
         db.commit()
     return updated
+
+
+def find_duplicate(
+    db: Session,
+    content_hash: str,
+    perceptual_hash: str,
+    *,
+    threshold: int | None = None,
+) -> tuple[int, int, int] | None:
+    """Cherche une image identique ou perceptuellement proche.
+
+    La comparaison est **globale** (tous les objets). Renvoie
+    `(photo_id, item_id, distance)` ou `None` ; une empreinte exacte est
+    prioritaire (distance 0).
+    """
+    from . import models  # import tardif : évite un cycle au chargement
+
+    limit = DUPLICATE_DISTANCE if threshold is None else threshold
+    rows = db.execute(
+        select(
+            models.ItemPhoto.id,
+            models.ItemPhoto.item_id,
+            models.ItemPhoto.content_hash,
+            models.ItemPhoto.perceptual_hash,
+        )
+    ).all()
+
+    best: tuple[int, int, int] | None = None
+    best_distance = limit + 1
+    for photo_id, item_id, stored_content, stored_perceptual in rows:
+        if content_hash and stored_content == content_hash:
+            return photo_id, item_id, 0
+        if perceptual_hash and stored_perceptual:
+            distance = perceptual_distance(perceptual_hash, stored_perceptual)
+            if distance <= limit and distance < best_distance:
+                best = (photo_id, item_id, distance)
+                best_distance = distance
+    return best
 
 
 def drop_legacy_thumbnails(db: Session) -> int:

@@ -223,8 +223,10 @@ class ItemPhoto(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)  # ordre d'affichage
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     caption: Mapped[str | None] = mapped_column(String(255))
-    # Empreinte SHA-256 de l'image normalisée : détection des doublons.
+    # Empreinte SHA-256 de l'image normalisée : détection des doublons exacts.
     content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    # Empreinte perceptuelle (dHash 64 bits, hex) : détection des quasi-doublons.
+    perceptual_hash: Mapped[str | None] = mapped_column(String(16), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     item: Mapped[Item] = relationship(back_populates="photos")

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import os
+import random
 import shutil
 import tempfile
 
@@ -23,6 +24,9 @@ os.environ.setdefault(
     "DATABASE_URL", "postgresql+psycopg://aviadb:test@localhost:55432/aviadb_test"
 )
 os.environ.setdefault("UPLOAD_DIR", f"{TMP_DIR}/uploads")
+# La suite gère son propre schéma (drop_all/create_all) : inutile de rejouer
+# les migrations Alembic à chaque démarrage du client de test.
+os.environ.setdefault("AVIADB_SKIP_MIGRATIONS", "1")
 os.environ["SECRET_KEY"] = "test-secret-key"
 os.environ["ADMIN_PASSWORD"] = "test-password"
 os.environ["ADMIN_USERNAME"] = "admin"
@@ -31,7 +35,7 @@ os.environ["ADMIN_MAX_FAILURES"] = "1000"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from helpers import ADMIN_LOGIN  # noqa: E402
-from PIL import Image  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
 
 from app import auth, currency, media  # noqa: E402
 from app.database import Base, SessionLocal, engine  # noqa: E402
@@ -98,11 +102,28 @@ def create_item(admin_client):
 
 @pytest.fixture
 def png_bytes():
-    """Petite image PNG valide, en mémoire."""
+    """Petite image PNG valide, en mémoire.
 
-    def _png(size=(2400, 1800), color=(30, 90, 200)):
+    `seed` dessine un motif déterministe (pour obtenir des images distinctes) et
+    `brightness` décale la luminosité (pour fabriquer un quasi-doublon).
+    """
+
+    def _png(size=(2400, 1800), color=(30, 90, 200), seed=None, brightness=0):
+        image = Image.new("RGB", size, color)
+        if seed is not None:
+            draw = ImageDraw.Draw(image)
+            rng = random.Random(seed)
+            width = max(2, size[0] // 6)
+            height = max(2, size[1] // 6)
+            for _ in range(12):
+                x0 = rng.randrange(0, max(1, size[0] - width))
+                y0 = rng.randrange(0, max(1, size[1] - height))
+                shade = tuple((channel + rng.randrange(128)) % 256 for channel in color)
+                draw.rectangle([x0, y0, x0 + width, y0 + height], fill=shade)
+        if brightness:
+            image = Image.eval(image, lambda value: min(255, value + brightness))
         buffer = io.BytesIO()
-        Image.new("RGB", size, color).save(buffer, format="PNG")
+        image.save(buffer, format="PNG")
         return buffer.getvalue()
 
     return _png
@@ -123,7 +144,13 @@ def upload_photo(admin_client, png_bytes):
         data = {"caption": caption} if caption else {}
         response = admin_client.post(
             f"/api/items/{item_id}/photos",
-            files={"file": ("photo.png", png_bytes(size=size, color=color), "image/png")},
+            files={
+                "file": (
+                    "photo.png",
+                    png_bytes(size=size, color=color, seed=counter["n"]),
+                    "image/png",
+                )
+            },
             data=data,
         )
         assert response.status_code == 201, response.text

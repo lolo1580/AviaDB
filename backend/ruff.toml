@@ -24,3 +24,5 @@ extend-immutable-calls = [
 [lint.per-file-ignores]
 # Les tests utilisent volontairement des imports tardifs et des noms courts.
 "tests/*" = ["E501"]
+# Les révisions Alembic sont générées : on ne réécrit pas leur mise en forme.
+"migrations/versions/*" = ["E501", "W291", "I001"]
